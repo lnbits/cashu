@@ -1,8 +1,6 @@
-# Cashu 
+# LNbits Cashu extension
 
-## Create ecash mint for pegging in/out of ecash
-
-
+This extensions is a Cashu mint and a Cashu wallet. 
 
 ### Usage
 
