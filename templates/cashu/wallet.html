@@ -1,6 +1,6 @@
 {% extends "public.html" %} {% block toolbar_title %} {% raw %} Cashu wallet {%
 endraw %} {% endblock %} {% block footer %}{% endblock %} {% block
-page_container %}
+page_container %} {% raw %}
 <q-page-container>
   <q-page>
     <div class="row q-col-gutter-y-md justify-center q-pt-sm q-pb-md">
@@ -12,8 +12,8 @@ page_container %}
                 <div class="col-12">
                   <h3 class="q-my-none q-py-none">
                     <center>
-                      <strong>{% raw %} {{ getBalance() }} </strong>
-                      {{tickerShort}} {% endraw %}
+                      <strong> {{ getBalance() }} </strong>
+                      {{tickerShort}}
                     </center>
                   </h3>
                 </div>
@@ -21,16 +21,16 @@ page_container %}
               <div class="row q-mt-xs q-mb-none" v-if="mints.length > 1">
                 <div class="col-12">
                   <a class="text-weight-light">
-                    Balance on all mints: {% raw %}
-                    <b>{{ getTotalBalance }} {{tickerShort}} </b>{% endraw %}</a
+                    Balance on all mints:
+                    <b>{{ getTotalBalance }} {{tickerShort}} </b></a
                   >
                 </div>
               </div>
               <div class="row q-mt-none q-mb-none" v-if="activeMintURL">
                 <div class="col-12">
                   <a class="text-weight-light">
-                    Mint: {% raw %}{{ getActiveMintUrlShort()}} {% endraw %}</a
-                  >
+                    Mint: {{ getActiveMintUrlShort()}}
+                  </a>
                 </div>
               </div>
             </div>
@@ -105,7 +105,6 @@ page_container %}
 
                     <!-- <q-item-label header>Your mints</q-item-label> -->
                     <div v-for="(mint, index) in mints" :key="mint.url">
-                      {% raw %}
                       <q-item
                         :active="mint.url == activeMintURL"
                         active-class="text-weight-bold text-white"
@@ -155,7 +154,7 @@ page_container %}
                           />
                         </q-item-section>
                       </q-item>
-                      {% endraw %}
+
                       <q-separator spaced inset="item" />
                     </div>
                   </q-list>
@@ -264,7 +263,6 @@ page_container %}
                   no-data-label="There are no tokens here yet"
                   :filter="tokensTable.filter"
                 >
-                  {% raw %}
                   <template v-slot:body="props">
                     <q-tr :props="props">
                       <q-td
@@ -282,7 +280,6 @@ page_container %}
                       </q-td>
                     </q-tr>
                   </template>
-                  {% endraw %}
                 </q-table>
               </q-tab-panel>
 
@@ -298,7 +295,6 @@ page_container %}
                   no-data-label="There are no invoices here yet"
                   :filter="invoicesTable.filter"
                 >
-                  {% raw %}
                   <template v-slot:body="props">
                     <q-tr :props="props">
                       <q-td key="status" :props="props">
@@ -366,7 +362,6 @@ page_container %}
                       </q-td>
                     </q-tr>
                   </template>
-                  {% endraw %}
                 </q-table>
               </q-tab-panel>
 
@@ -382,7 +377,6 @@ page_container %}
                   no-data-label="There are no tokens here yet"
                   :filter="historyTable.filter"
                 >
-                  {% raw %}
                   <template v-slot:body="props">
                     <q-tr :props="props">
                       <q-td key="status" :props="props">
@@ -441,7 +435,6 @@ page_container %}
                       </q-td>
                     </q-tr>
                   </template>
-                  {% endraw %}
                 </q-table>
               </q-tab-panel>
             </q-tab-panels>
@@ -557,10 +550,8 @@ page_container %}
       >
         <q-card class="q-pa-lg q-pt-xl lnbits__dialog-card">
           <div v-if="payInvoiceData.invoice">
-            {% raw %}
             <h6 class="q-my-none">
-              Pay {{ payInvoiceData.invoice.fsat }}{% endraw %}
-              {{LNBITS_DENOMINATION}} {% raw %}
+              Pay {{ payInvoiceData.invoice.fsat }} {{LNBITS_DENOMINATION}}
             </h6>
             <q-separator class="q-my-sm"></q-separator>
             <p class="text-wrap">
@@ -570,7 +561,7 @@ page_container %}
               }}<br />
               <strong>Hash:</strong> {{ payInvoiceData.invoice.hash }}
             </p>
-            {% endraw %}
+
             <div v-if="canPay" class="row q-mt-lg">
               <q-btn
                 unelevated
@@ -597,7 +588,7 @@ page_container %}
             </div>
           </div>
           <!-- <div v-else-if="payInvoiceData.lnurlauth">
-            {% raw %}
+            
             <q-form @submit="authLnurl" class="q-gutter-md">
               <p class="q-my-none text-h6">
                 Authenticate with <b>{{ payInvoiceData.lnurlauth.domain }}</b>?
@@ -625,10 +616,9 @@ page_container %}
                 >
               </div>
             </q-form>
-            {% endraw %}
+            
           </div> -->
           <div v-else-if="payInvoiceData.lnurlpay">
-            {% raw %}
             <q-form @submit="lnurlPaySecond" class="q-gutter-md">
               <p
                 v-if="payInvoiceData.lnurlpay.maxSendable == payInvoiceData.lnurlpay.minSendable"
@@ -636,7 +626,7 @@ page_container %}
               >
                 <b>{{ payInvoiceData.domain }}</b> is requesting {{
                 payInvoiceData.lnurlpay.maxSendable | msatoshiFormat }} {%
-                endraw %} {{LNBITS_DENOMINATION}} {% raw %}
+                endraw %} {{LNBITS_DENOMINATION}}
                 <!-- <span v-if="payInvoiceData.lnurlpay.commentAllowed > 0">
                   <br />
                   and a {{payInvoiceData.lnurlpay.commentAllowed}}-char comment
@@ -656,7 +646,7 @@ page_container %}
                 <b
                   >{{ payInvoiceData.lnurlpay.maxSendable | msatoshiFormat }}</b
                 >
-                {% endraw %} {{LNBITS_DENOMINATION}} {% raw %}
+                {{LNBITS_DENOMINATION}}
                 <!-- <span v-if="payInvoiceData.lnurlpay.commentAllowed > 0">
                   <br />
                   and a {{payInvoiceData.lnurlpay.commentAllowed}}-char comment
@@ -673,7 +663,6 @@ page_container %}
               </div>
               <div class="row">
                 <div class="col">
-                  {% endraw %}
                   <q-input
                     filled
                     dense
@@ -1124,7 +1113,7 @@ page_container %}
     grid-area: 1 / 4 / 5 / 4;
   }
 </style>
-{% endblock %} {% block scripts %}
+{% endraw %} {% endblock %} {% block scripts %}
 <script src="{{ url_for('cashu_static', path='js/noble-secp256k1.js') }}"></script>
 <script src="{{ url_for('cashu_static', path='js/utils.js') }}"></script>
 <script src="{{ url_for('cashu_static', path='js/dhke.js') }}"></script>
@@ -1656,7 +1645,7 @@ page_container %}
         } else if (
           req.toLowerCase().startsWith('cashu:') ||
           req.indexOf('eyJwcm') != -1
-          ) {
+        ) {
           // very dirty way of parsing cashu tokens from either a pasted token or a URL like https://host.com?token=eyJwcm...
           // or cashu:eyJwcm...
           this.receiveData.tokensBase64 = req.slice(req.indexOf('eyJwcm'))
@@ -2456,7 +2445,7 @@ page_container %}
           this.assertMintError(keys)
           this.keys = keys
           localStorage.setItem('cashu.keys', JSON.stringify(keys))
-          keysets = await this.fetchMintKeysets()
+          let keysets = await this.fetchMintKeysets()
           // save keys to mints in local storage
           if (this.mints.filter(m => m.url == this.activeMintURL).length) {
             this.mints.filter(m => m.url == this.activeMintURL)[0].keys = keys
