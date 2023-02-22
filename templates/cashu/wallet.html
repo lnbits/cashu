@@ -625,8 +625,8 @@ page_container %} {% raw %}
                 class="q-my-none text-h6 text-center"
               >
                 <b>{{ payInvoiceData.domain }}</b> is requesting {{
-                payInvoiceData.lnurlpay.maxSendable | msatoshiFormat }} {%
-                endraw %} {{LNBITS_DENOMINATION}}
+                payInvoiceData.lnurlpay.maxSendable | msatoshiFormat }}
+                {{LNBITS_DENOMINATION}}
                 <!-- <span v-if="payInvoiceData.lnurlpay.commentAllowed > 0">
                   <br />
                   and a {{payInvoiceData.lnurlpay.commentAllowed}}-char comment
