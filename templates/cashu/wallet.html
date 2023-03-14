@@ -1987,6 +1987,7 @@ page_container %} {% raw %}
         try {
           const secrets = await this.generateSecrets(amounts)
           const {outputs, rs} = await this.constructOutputs(amounts, secrets)
+          const keys = this.keys // save keys here so they don't get updated before the next call is done and cause a race condition
           const promises = await axios.post(
             `${this.activeMintURL}/mint?payment_hash=${payment_hash}`,
             {
@@ -2001,7 +2002,7 @@ page_container %} {% raw %}
             promises.data.promises,
             secrets,
             rs,
-            this.keys
+            keys
           )
           return proofs
         } catch (error) {
@@ -2100,7 +2101,7 @@ page_container %} {% raw %}
             proofs,
             outputs
           }
-
+          const keys = this.keys
           const {data} = await axios.post(
             `${this.activeMintURL}/split`,
             payload
@@ -2114,13 +2115,13 @@ page_container %} {% raw %}
             data.fst,
             frst_secrets,
             frst_rs,
-            this.keys
+            keys
           )
           const scndProofs = this.constructProofs(
             data.snd,
             scnd_secrets,
             scnd_rs,
-            this.keys
+            keys
           )
 
           return {fristProofs, scndProofs}
