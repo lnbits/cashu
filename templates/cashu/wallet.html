@@ -1858,7 +1858,7 @@ page_container %} {% raw %}
         }
       },
 
-      constructProofs: function (promises, secrets, rs) {
+      constructProofs: function (promises, secrets, rs, mint_pubkeys) {
         const proofs = []
         for (let i = 0; i < promises.length; i++) {
           const encodedSecret = uint8ToBase64.encode(secrets[i])
@@ -1867,16 +1867,17 @@ page_container %} {% raw %}
             promises[i].amount,
             promises[i]['C_'],
             encodedSecret,
-            rs[i]
+            rs[i],
+            mint_pubkeys
           )
           proofs.push({id, amount, C, secret})
         }
         return proofs
       },
 
-      promiseToProof: function (id, amount, C_hex, secret, r) {
+      promiseToProof: function (id, amount, C_hex, secret, r, mint_pubkeys) {
         const C_ = nobleSecp256k1.Point.fromHex(C_hex)
-        const A = this.keys[amount]
+        const A = mint_pubkeys[amount]
         const C = step3Alice(
           C_,
           nobleSecp256k1.utils.hexToBytes(r),
@@ -1983,7 +1984,8 @@ page_container %} {% raw %}
           let proofs = await this.constructProofs(
             promises.data.promises,
             secrets,
-            rs
+            rs,
+            this.keys
           )
           return proofs
         } catch (error) {
@@ -2095,12 +2097,14 @@ page_container %} {% raw %}
           const fristProofs = this.constructProofs(
             data.fst,
             frst_secrets,
-            frst_rs
+            frst_rs,
+            this.keys
           )
           const scndProofs = this.constructProofs(
             data.snd,
             scnd_secrets,
-            scnd_rs
+            scnd_rs,
+            this.keys
           )
 
           return {fristProofs, scndProofs}
