@@ -498,8 +498,8 @@ page_container %} {% raw %}
                 align="between"
                 rectangle
                 color="primary"
-                class="full-width"
-                ><strong>Pay invoice</strong>
+              >
+                <strong>Pay invoice</strong>
               </q-btn>
             </div>
           </div>
@@ -2119,7 +2119,7 @@ page_container %} {% raw %}
         /*
                 splits proofs so the user can keep firstProofs, send scndProofs.
                 then sets scndProofs as reserved.
-  
+
                 if invalidate, scndProofs (the one to send) are invalidated
                 */
         try {
@@ -2283,12 +2283,18 @@ page_container %} {% raw %}
           this.activeProofs,
           amount
         )
-        const payload = {
-          proofs: scndProofs.flat(),
-          amount,
-          pr: this.payInvoiceData.data.request
-        }
         try {
+          let amounts = [1, 1, 1, 1]
+          let secrets = await this.generateSecrets(amounts) // four change blank outputs
+          let {outputs, rs} = await this.constructOutputs(amounts, secrets)
+          let amount_paid = amount
+          const payload = {
+            proofs: scndProofs.flat(),
+            amount,
+            pr: this.payInvoiceData.data.request,
+            outputs
+          }
+          const keys = this.keys // fix keys for constructProofs
           const {data} = await axios.post(`${this.activeMintURL}/melt`, payload)
           this.assertMintError(data)
           if (window.navigator.vibrate) navigator.vibrate(200)
@@ -2297,24 +2303,34 @@ page_container %} {% raw %}
           // delete spent tokens from db
           this.deleteProofs(scndProofs)
 
+          // get change
+          if (data.change != null) {
+            const changeProofs = this.constructProofs(
+              data.change,
+              secrets,
+              rs,
+              keys
+            )
+            console.log('## Received change: ' + this.sumProofs(changeProofs))
+            amount_paid = amount_paid - this.sumProofs(changeProofs)
+            this.proofs = this.proofs.concat(changeProofs)
+            // hack to update balance
+            this.activeProofs = this.activeProofs.concat([])
+            this.storeProofs()
+          }
+
           // update UI
 
           this.historyTokens.push({
             status: 'paid',
-            amount: -amount,
+            amount: -amount_paid,
             date: currentDateStr(),
             token: this.serializeProofs(scndProofs)
           })
           this.storehistoryTokens()
 
-          console.log({
-            amount: -amount,
-            bolt11: this.payInvoiceData.data.request,
-            hash: this.payInvoiceData.data.hash,
-            memo: this.payInvoiceData.data.memo
-          })
           this.invoicesCashu.push({
-            amount: -amount,
+            amount: -amount_paid,
             bolt11: this.payInvoiceData.data.request,
             hash: this.payInvoiceData.data.hash,
             memo: this.payInvoiceData.data.memo,
