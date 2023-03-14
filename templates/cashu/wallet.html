@@ -1106,28 +1106,8 @@ page_container %} {% raw %}
     </div>
   </q-page>
 </q-page-container>
-{% endblock %} {% block styles %}
-<style>
-  * {
-    touch-action: manipulation;
-  }
-
-  .keypad {
-    display: grid;
-    grid-gap: 8px;
-    grid-template-columns: repeat(4, 1fr);
-    grid-template-rows: repeat(4, 1fr);
-  }
-
-  .keypad .btn {
-    height: 100%;
-  }
-
-  .keypad .btn-confirm {
-    grid-area: 1 / 4 / 5 / 4;
-  }
-</style>
-{% endraw %} {% endblock %} {% block scripts %}
+{% endraw %} {% endblock %} {% block styles %} {% endblock %} {% block scripts
+%}
 <script src="{{ url_for('cashu_static', path='js/noble-secp256k1.js') }}"></script>
 <script src="{{ url_for('cashu_static', path='js/utils.js') }}"></script>
 <script src="{{ url_for('cashu_static', path='js/dhke.js') }}"></script>
