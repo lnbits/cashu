@@ -11,24 +11,22 @@ page_container %} {% raw %}
               <div class="row">
                 <div class="col-12">
                   <h3 class="q-my-none q-py-none">
-                    <center>
-                      <strong> {{ getBalance() }} </strong>
-                      {{tickerShort}}
-                    </center>
+                    <strong> {{ getTotalBalance }} </strong>
+                    {{tickerShort}}
                   </h3>
                 </div>
               </div>
               <div class="row q-mt-xs q-mb-none" v-if="mints.length > 1">
                 <div class="col-12">
                   <a class="text-weight-light">
-                    Balance on all mints:
-                    <b>{{ getTotalBalance }} {{tickerShort}} </b></a
+                    Balance on active mint:
+                    <b>{{ getBalance() }} {{tickerShort}} </b></a
                   >
                 </div>
               </div>
               <div class="row q-mt-none q-mb-none" v-if="activeMintURL">
                 <div class="col-12">
-                  <a class="text-weight-light">
+                  <a class="text-weight-regular">
                     Mint: {{ getActiveMintUrlShort()}}
                   </a>
                 </div>
@@ -75,8 +73,8 @@ page_container %} {% raw %}
             </div>
 
             <!-- ///////////////////////////////////////////
-              ////////////////// TABLES /////////////////
-              /////////////////////////////////////////// -->
+                ////////////////// TABLES /////////////////
+                /////////////////////////////////////////// -->
             <q-tabs v-model="tab" no-caps class="bg-dark text-white shadow-2">
               <q-tab name="invoices" label="Invoices"></q-tab>
               <!-- <q-tab name="tokens" label="Tokens"></q-tab> -->
@@ -136,8 +134,8 @@ page_container %} {% raw %}
                             >{{mint.url}}</q-item-label
                           >
                           <!-- <q-item-label caption v-if="mint.url == activeMintURL"
-                              >This is your active mint.</q-item-label
-                            > -->
+                                >This is your active mint.</q-item-label
+                              > -->
                         </q-item-section>
 
                         <q-item-section side>
@@ -344,8 +342,8 @@ page_container %} {% raw %}
                         <div>{{props.row.date}}</div>
                       </q-td>
                       <!-- <q-td key="memo" :props="props">
-                          <div>{{props.row.memo}}</div>
-                        </q-td> -->
+                            <div>{{props.row.memo}}</div>
+                          </q-td> -->
                       <q-td key="bolt11" :props="props">
                         <div @click="copyText(props.row.bolt11)">
                           {{shortenString(props.row.bolt11, 20, 10)}}
@@ -425,8 +423,8 @@ page_container %} {% raw %}
                         <div>{{props.row.date}}</div>
                       </q-td>
                       <!-- <q-td key="memo" :props="props">
-                          <div>{{props.row.memo}}</div>
-                        </q-td> -->
+                            <div>{{props.row.memo}}</div>
+                          </q-td> -->
                       <q-td key="token" :props="props">
                         <div @click="copyText(props.row.token)">
                           {{shortenString(props.row.token, 10, 40)}}
@@ -588,36 +586,36 @@ page_container %} {% raw %}
             </div>
           </div>
           <!-- <div v-else-if="payInvoiceData.lnurlauth">
-            
-            <q-form @submit="authLnurl" class="q-gutter-md">
-              <p class="q-my-none text-h6">
-                Authenticate with <b>{{ payInvoiceData.lnurlauth.domain }}</b>?
-              </p>
-              <q-separator class="q-my-sm"></q-separator>
-              <p>
-                For every website and for every LNbits wallet, a new keypair
-                will be deterministically generated so your identity can't be
-                tied to your LNbits wallet or linked across websites. No other
-                data will be shared with {{ payInvoiceData.lnurlauth.domain }}.
-              </p>
-              <p>
-                Your public key for
-                <b>{{ payInvoiceData.lnurlauth.domain }}</b> is:
-              </p>
-              <p class="q-mx-xl">
-                <code class="text-wrap">
-                  {{ payInvoiceData.lnurlauth.pubkey }}
-                </code>
-              </p>
-              <div class="row q-mt-lg">
-                <q-btn unelevated color="primary" type="submit">Login</q-btn>
-                <q-btn v-close-popup flat color="grey" class="q-ml-auto"
-                  >Cancel</q-btn
-                >
-              </div>
-            </q-form>
-            
-          </div> -->
+              
+              <q-form @submit="authLnurl" class="q-gutter-md">
+                <p class="q-my-none text-h6">
+                  Authenticate with <b>{{ payInvoiceData.lnurlauth.domain }}</b>?
+                </p>
+                <q-separator class="q-my-sm"></q-separator>
+                <p>
+                  For every website and for every LNbits wallet, a new keypair
+                  will be deterministically generated so your identity can't be
+                  tied to your LNbits wallet or linked across websites. No other
+                  data will be shared with {{ payInvoiceData.lnurlauth.domain }}.
+                </p>
+                <p>
+                  Your public key for
+                  <b>{{ payInvoiceData.lnurlauth.domain }}</b> is:
+                </p>
+                <p class="q-mx-xl">
+                  <code class="text-wrap">
+                    {{ payInvoiceData.lnurlauth.pubkey }}
+                  </code>
+                </p>
+                <div class="row q-mt-lg">
+                  <q-btn unelevated color="primary" type="submit">Login</q-btn>
+                  <q-btn v-close-popup flat color="grey" class="q-ml-auto"
+                    >Cancel</q-btn
+                  >
+                </div>
+              </q-form>
+              
+            </div> -->
           <div v-else-if="payInvoiceData.lnurlpay">
             <q-form @submit="lnurlPaySecond" class="q-gutter-md">
               <p
@@ -628,9 +626,9 @@ page_container %} {% raw %}
                 payInvoiceData.lnurlpay.maxSendable | msatoshiFormat }}
                 {{LNBITS_DENOMINATION}}
                 <!-- <span v-if="payInvoiceData.lnurlpay.commentAllowed > 0">
-                  <br />
-                  and a {{payInvoiceData.lnurlpay.commentAllowed}}-char comment
-                </span> -->
+                    <br />
+                    and a {{payInvoiceData.lnurlpay.commentAllowed}}-char comment
+                  </span> -->
               </p>
               <p v-else class="q-my-none text-h6 text-center">
                 <b
@@ -648,9 +646,9 @@ page_container %} {% raw %}
                 >
                 {{LNBITS_DENOMINATION}}
                 <!-- <span v-if="payInvoiceData.lnurlpay.commentAllowed > 0">
-                  <br />
-                  and a {{payInvoiceData.lnurlpay.commentAllowed}}-char comment
-                </span> -->
+                    <br />
+                    and a {{payInvoiceData.lnurlpay.commentAllowed}}-char comment
+                  </span> -->
               </p>
               <q-separator class="q-my-sm"></q-separator>
               <div class="row" v-if="payInvoiceData.lnurlpay.description">
@@ -896,11 +894,11 @@ page_container %} {% raw %}
               @keyup.enter="requestMintButton"
             ></q-input>
             <!-- <q-input
-                filled
-                dense
-                v-model.trim="invoiceData.memo"
-                label="Memo"
-              ></q-input> -->
+                  filled
+                  dense
+                  v-model.trim="invoiceData.memo"
+                  label="Memo"
+                ></q-input> -->
           </div>
           <div v-else class="text-center q-mb-lg q-mt-none q-pt-none">
             <a class="text-secondary" :href="'lightning:' + invoiceData.bolt11">
@@ -960,11 +958,11 @@ page_container %} {% raw %}
               @keyup.enter="sendTokens"
             ></q-input>
             <!-- <q-input
-                filled
-                dense
-                v-model.trim="sendData.memo"
-                label="Memo"
-              ></q-input> -->
+                  filled
+                  dense
+                  v-model.trim="sendData.memo"
+                  label="Memo"
+                ></q-input> -->
           </div>
           <div v-else class="text-center q-mb-lg">
             <div class="text-center q-mb-lg" v-if="sendData.tokens.length < 2">
@@ -999,8 +997,8 @@ page_container %} {% raw %}
               >Send Tokens</q-btn
             >
             <!-- <q-btn v-else @click="burnTokens" outline color="grey"
-                >Burn Tokens</q-btn
-              > -->
+                  >Burn Tokens</q-btn
+                > -->
             <div v-else>
               <q-btn color="primary" @click="copyText(sendData.tokensBase64)"
                 >Copy token</q-btn
@@ -1442,14 +1440,12 @@ page_container %} {% raw %}
           this.addMintDialog.show = false
         }
       },
-      activateMint: async function (url, verbose = false, stop_workers = true) {
+      activateMint: async function (url, verbose = false) {
         if (url == this.activeMintURL) {
           return
         }
-        if (stop_workers) {
-          // we need to stop workers because they will reset the activeMint again
-          this.clearAllWorkers()
-        }
+        // we need to stop workers because they will reset the activeMint again
+        this.clearAllWorkers()
         let presiouvURL = this.activeMintURL
         try {
           this.activeMintURL = url
@@ -1620,13 +1616,13 @@ page_container %} {% raw %}
           // get request from pay invoice dialog
           req = this.payInvoiceData.data.request
         }
-        // strip off lightning: prefix
-        if (req.toLowerCase().startsWith('lightning:')) {
-          req = req.slice(10)
-        }
+
         // determine request type
         if (req.toLowerCase().startsWith('lnbc')) {
           this.payInvoiceData.data.request = req
+          reqtype = 'bolt11'
+        } else if (req.toLowerCase().startsWith('lightning:')) {
+          this.payInvoiceData.data.request = req.slice(10)
           reqtype = 'bolt11'
         } else if (req.toLowerCase().startsWith('lnurl:')) {
           this.payInvoiceData.data.request = req.slice(6)
@@ -1642,12 +1638,8 @@ page_container %} {% raw %}
         ) {
           this.payInvoiceData.data.request = req
           reqtype = 'lnurl'
-        } else if (
-          req.toLowerCase().startsWith('cashu:') ||
-          req.indexOf('eyJwcm') != -1
-        ) {
+        } else if (req.indexOf('eyJwcm')) {
           // very dirty way of parsing cashu tokens from either a pasted token or a URL like https://host.com?token=eyJwcm...
-          // or cashu:eyJwcm...
           this.receiveData.tokensBase64 = req.slice(req.indexOf('eyJwcm'))
           reqtype = 'cashu'
         }
@@ -1939,8 +1931,8 @@ page_container %} {% raw %}
 
       requestMint: async function () {
         /*
-            gets an invoice from the mint to get new tokens
-            */
+                gets an invoice from the mint to get new tokens
+                */
         try {
           const {data} = await axios.get(
             `${this.activeMintURL}/mint?amount=${this.invoiceData.amount}`
@@ -1971,13 +1963,13 @@ page_container %} {% raw %}
 
       mintApi: async function (amounts, payment_hash, verbose = true) {
         /*
-            asks the mint to check whether the invoice with payment_hash has been paid
-            and requests signing of the attached outputs.
-            */
+                asks the mint to check whether the invoice with payment_hash has been paid
+                and requests signing of the attached outputs.
+                */
 
         try {
-          let secrets = await this.generateSecrets(amounts)
-          let {outputs, rs} = await this.constructOutputs(amounts, secrets)
+          const secrets = await this.generateSecrets(amounts)
+          const {outputs, rs} = await this.constructOutputs(amounts, secrets)
           const promises = await axios.post(
             `${this.activeMintURL}/mint?payment_hash=${payment_hash}`,
             {
@@ -2043,9 +2035,9 @@ page_container %} {% raw %}
 
       split: async function (proofs, amount) {
         /*
-            supplies proofs and requests a split from the mint of these
-            proofs at a specific amount
-            */
+                supplies proofs and requests a split from the mint of these
+                proofs at a specific amount
+                */
         try {
           if (proofs.length == 0) {
             throw new Error('no proofs provided.')
@@ -2124,11 +2116,11 @@ page_container %} {% raw %}
 
       splitToSend: async function (proofs, amount, invlalidate = false) {
         /*
-            splits proofs so the user can keep firstProofs, send scndProofs.
-            then sets scndProofs as reserved.
-
-            if invalidate, scndProofs (the one to send) are invalidated
-            */
+                splits proofs so the user can keep firstProofs, send scndProofs.
+                then sets scndProofs as reserved.
+  
+                if invalidate, scndProofs (the one to send) are invalidated
+                */
         try {
           const spendableProofs = proofs.filter(p => !p.reserved)
           if (this.sumProofs(spendableProofs) < amount) {
@@ -2173,8 +2165,8 @@ page_container %} {% raw %}
 
       redeem: async function () {
         /*
-            uses split to receive new tokens.
-            */
+                uses split to receive new tokens.
+                */
         this.showReceiveTokens = false
         console.log('### receive tokens', this.receiveData.tokensBase64)
         try {
@@ -2238,8 +2230,8 @@ page_container %} {% raw %}
 
       sendTokens: async function () {
         /*
-            calls splitToSend, displays token and kicks off the spendableWorker
-            */
+                calls splitToSend, displays token and kicks off the spendableWorker
+                */
         try {
           // keep firstProofs, send scndProofs and delete them (invalidate=true)
           let {fristProofs, scndProofs} = await this.splitToSend(
@@ -2367,9 +2359,9 @@ page_container %} {% raw %}
 
       checkProofsSpendable: async function (proofs, update_history = false) {
         /*
-            checks with the mint whether an array of proofs is still
-            spendable or already invalidated
-            */
+                checks with the mint whether an array of proofs is still
+                spendable or already invalidated
+                */
         if (proofs.length == 0) {
           return
         }
@@ -2439,13 +2431,13 @@ page_container %} {% raw %}
         try {
           console.log('### GET', `${this.activeMintURL}/keys`)
           const {data} = await axios.get(`${this.activeMintURL}/keys`, {
-            timeout: 2000
+            timeout: 6000
           })
-          var keys = data
+          const keys = data
           this.assertMintError(keys)
           this.keys = keys
           localStorage.setItem('cashu.keys', JSON.stringify(keys))
-          let keysets = await this.fetchMintKeysets()
+          const keysets = await this.fetchMintKeysets()
           // save keys to mints in local storage
           if (this.mints.filter(m => m.url == this.activeMintURL).length) {
             this.mints.filter(m => m.url == this.activeMintURL)[0].keys = keys
@@ -2469,7 +2461,7 @@ page_container %} {% raw %}
       fetchMintKeysets: async function () {
         try {
           const {data} = await axios.get(`${this.activeMintURL}/keysets`, {
-            timeout: 2000
+            timeout: 6000
           })
           this.assertMintError(data)
           this.keysets = data.keysets
@@ -2495,9 +2487,9 @@ page_container %} {% raw %}
         const invoice = this.invoicesCashu.find(i => i.hash === payment_hash)
         try {
           if (invoice.mint != null) {
-            await this.activateMint(invoice.mint, false, false)
+            await this.activateMint(invoice.mint, false)
           }
-          proofs = await this.mint(invoice.amount, invoice.hash, verbose)
+          const proofs = await this.mint(invoice.amount, invoice.hash, verbose)
           return proofs
         } catch (error) {
           console.log('Invoice still pending', invoice.hash)
@@ -2532,9 +2524,9 @@ page_container %} {% raw %}
 
       checkTokenSpendable: async function (token, verbose = true) {
         /*
-            checks whether a base64-encoded token (from the history table) has been spent already.
-            if it is spent, the appropraite entry in the history table is set to paid.
-            */
+                checks whether a base64-encoded token (from the history table) has been spent already.
+                if it is spent, the appropraite entry in the history table is set to paid.
+                */
         const tokenJson = JSON.parse(atob(token))
         const proofs = tokenJson.proofs
 
@@ -2883,13 +2875,13 @@ page_container %} {% raw %}
       // payments: function () {
       //   this.getBalance()
       // },
-      proofs: function () {
-        if (this.keysets) {
-          this.activeProofs = this.proofs.filter(p =>
-            this.keysets.includes(p.id)
-          )
-        }
-      }
+      // proofs: function () {
+      //   if (this.keysets) {
+      //     this.activeProofs = this.proofs.filter(p =>
+      //       this.keysets.includes(p.id)
+      //     )
+      //   }
+      // }
     },
 
     mounted: function () {},
