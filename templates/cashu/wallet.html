@@ -11,7 +11,7 @@ page_container %} {% raw %}
               <div class="row">
                 <div class="col-12">
                   <h3 class="q-my-none q-py-none">
-                    <strong> {{ getTotalBalance }} </strong>
+                    <strong> {{ getBalance() }} </strong>
                     {{tickerShort}}
                   </h3>
                 </div>
@@ -19,8 +19,8 @@ page_container %} {% raw %}
               <div class="row q-mt-xs q-mb-none" v-if="mints.length > 1">
                 <div class="col-12">
                   <a class="text-weight-light">
-                    Balance on active mint:
-                    <b>{{ getBalance() }} {{tickerShort}} </b></a
+                    Balance on all mints:
+                    <b>{{ getTotalBalance }} {{tickerShort}} </b></a
                   >
                 </div>
               </div>
@@ -235,7 +235,7 @@ page_container %} {% raw %}
                         dense
                         v-model.number="swapData.amount"
                         type="number"
-                        label="Amount ({{LNBITS_DENOMINATION}})"
+                        :label="`Amount (${tickerShort})`"
                         style="min-width: 200px"
                       ></q-input>
                       <q-btn
@@ -549,7 +549,7 @@ page_container %} {% raw %}
         <q-card class="q-pa-lg q-pt-xl lnbits__dialog-card">
           <div v-if="payInvoiceData.invoice">
             <h6 class="q-my-none">
-              Pay {{ payInvoiceData.invoice.fsat }} {{LNBITS_DENOMINATION}}
+              Pay {{ payInvoiceData.invoice.fsat }} {{tickerShort}}
             </h6>
             <q-separator class="q-my-sm"></q-separator>
             <p class="text-wrap">
@@ -624,7 +624,7 @@ page_container %} {% raw %}
               >
                 <b>{{ payInvoiceData.domain }}</b> is requesting {{
                 payInvoiceData.lnurlpay.maxSendable | msatoshiFormat }}
-                {{LNBITS_DENOMINATION}}
+                {{tickerShort}}
                 <!-- <span v-if="payInvoiceData.lnurlpay.commentAllowed > 0">
                     <br />
                     and a {{payInvoiceData.lnurlpay.commentAllowed}}-char comment
@@ -644,7 +644,7 @@ page_container %} {% raw %}
                 <b
                   >{{ payInvoiceData.lnurlpay.maxSendable | msatoshiFormat }}</b
                 >
-                {{LNBITS_DENOMINATION}}
+                {{tickerShort}}
                 <!-- <span v-if="payInvoiceData.lnurlpay.commentAllowed > 0">
                     <br />
                     and a {{payInvoiceData.lnurlpay.commentAllowed}}-char comment
@@ -667,7 +667,7 @@ page_container %} {% raw %}
                     autofocus
                     v-model.number="payInvoiceData.data.amount"
                     type="number"
-                    label="Amount ({{LNBITS_DENOMINATION}}) *"
+                    :label="`Amount (${tickerShort}) *`"
                     :min="payInvoiceData.lnurlpay.minSendable / 1000"
                     :max="payInvoiceData.lnurlpay.maxSendable / 1000"
                     :readonly="payInvoiceData.lnurlpay.maxSendable == payInvoiceData.lnurlpay.minSendable"
@@ -885,7 +885,7 @@ page_container %} {% raw %}
               dense
               type="number"
               v-model.number="invoiceData.amount"
-              label="Amount ({{LNBITS_DENOMINATION}}) *"
+              :label="`Amount (${tickerShort}) *`"
               mask="#"
               fill-mask="0"
               reverse-fill-mask
@@ -937,6 +937,22 @@ page_container %} {% raw %}
       <q-dialog v-model="showSendTokens" position="top">
         <q-card class="q-pa-lg q-pt-xl lnbits__dialog-card">
           <div v-if="!sendData.tokens">
+            <!-- <div class="row">
+              <div class="col-12">
+                <q-select
+                  clearable
+                  filled
+                  dense
+                  color="primary"
+                  v-model="activeMintURL"
+                  :options="swapDataOptions()"
+                  option-value="url"
+                  option-label="shorturl"
+                  label="Select mint"
+                  style="min-width: 200px"
+                />
+              </div>
+            </div> -->
             <div class="row items-center no-wrap q-mb-sm">
               <div class="col-12">
                 <span class="text-subtitle1"
@@ -949,7 +965,7 @@ page_container %} {% raw %}
               dense
               type="number"
               v-model.number="sendData.amount"
-              label="Amount ({{LNBITS_DENOMINATION}}) *"
+              :label="`Amount (${tickerShort}) *`"
               mask="#"
               fill-mask="0"
               reverse-fill-mask
@@ -1238,7 +1254,7 @@ page_container %} {% raw %}
             {
               name: 'value',
               align: 'left',
-              label: 'Value ({{LNBITS_DENOMINATION}})',
+              label: 'Value ({{tickerShort}})',
               field: 'value',
               sortable: true
             },
@@ -1252,7 +1268,7 @@ page_container %} {% raw %}
             {
               name: 'sum',
               align: 'left',
-              label: 'Sum ({{LNBITS_DENOMINATION}})',
+              label: 'Sum ({{tickerShort}})',
               field: 'sum',
               sortable: true
             }
@@ -2435,7 +2451,7 @@ page_container %} {% raw %}
         try {
           console.log('### GET', `${this.activeMintURL}/keys`)
           const {data} = await axios.get(`${this.activeMintURL}/keys`, {
-            timeout: 6000
+            timeout: 2000
           })
           const keys = data
           this.assertMintError(keys)
@@ -2465,7 +2481,7 @@ page_container %} {% raw %}
       fetchMintKeysets: async function () {
         try {
           const {data} = await axios.get(`${this.activeMintURL}/keysets`, {
-            timeout: 6000
+            timeout: 2000
           })
           this.assertMintError(data)
           this.keysets = data.keysets
@@ -2721,7 +2737,7 @@ page_container %} {% raw %}
           if (e.key == 'cashu.proofs') {
             this.proofs = JSON.parse(e.newValue)
           }
-          // if these were the activeMintUrl, reload
+          // if these were the activeMintURL, reload
           if (e.key == 'cashu.activeMintURL') {
             this.activateMint(e.newValue)
           }
@@ -2893,6 +2909,8 @@ page_container %} {% raw %}
     created: async function () {
       let params = new URL(document.location).searchParams
 
+      this.proofs = JSON.parse(localStorage.getItem('cashu.proofs') || '[]')
+
       // load mints
       if (localStorage.getItem('cashu.mints')) {
         this.mints = JSON.parse(localStorage.getItem('cashu.mints'))
@@ -2941,7 +2959,6 @@ page_container %} {% raw %}
       this.historyTokens = JSON.parse(
         localStorage.getItem('cashu.historyTokens') || '[]'
       )
-      this.proofs = JSON.parse(localStorage.getItem('cashu.proofs') || '[]')
 
       // run migrations
       await this.migrationLocalstorage()
