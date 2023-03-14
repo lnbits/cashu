@@ -2895,13 +2895,14 @@ page_container %} {% raw %}
       // payments: function () {
       //   this.getBalance()
       // },
-      // proofs: function () {
-      //   if (this.keysets) {
-      //     this.activeProofs = this.proofs.filter(p =>
-      //       this.keysets.includes(p.id)
-      //     )
-      //   }
-      // }
+      proofs: function () {
+        // this updates the balance views in real time
+        if (this.keysets) {
+          this.activeProofs = this.proofs.filter(p =>
+            this.keysets.includes(p.id)
+          )
+        }
+      }
     },
 
     mounted: function () {},
