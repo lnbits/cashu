@@ -11,24 +11,24 @@ page_container %} {% raw %}
               <div class="row">
                 <div class="col-12">
                   <h3 class="q-my-none q-py-none">
-                    <strong> {{ getBalance() }} </strong>
+                    <strong> {{ getTotalBalance }} </strong>
                     {{tickerShort}}
                   </h3>
                 </div>
               </div>
               <div class="row q-mt-xs q-mb-none" v-if="mints.length > 1">
                 <div class="col-12">
-                  <a class="text-weight-light">
-                    Balance on all mints:
-                    <b>{{ getTotalBalance }} {{tickerShort}} </b></a
-                  >
+                  <h6 class="q-my-none q-py-none text-weight-regular">
+                    This mint:
+                    <b>{{ getBalance() }} {{tickerShort}} </b>
+                  </h6>
                 </div>
               </div>
-              <div class="row q-mt-none q-mb-none" v-if="activeMintURL">
+              <div class="row q-mt-xs q-mb-none" v-if="activeMintURL">
                 <div class="col-12">
-                  <a class="text-weight-regular">
+                  <span class="text-weight-regular">
                     Mint: {{ getActiveMintUrlShort()}}
-                  </a>
+                  </span>
                 </div>
               </div>
             </div>
@@ -50,7 +50,7 @@ page_container %} {% raw %}
                   icon-right="toll"
                   class="full-width"
                   @click="showReceiveTokensDialog"
-                  >Get Ecash</q-btn
+                  >Receive Ecash</q-btn
                 >
               </div>
               <div class="col-0 col-sm-2 col-md-4"></div>
@@ -525,7 +525,7 @@ page_container %} {% raw %}
           >
           </q-tab>
           <q-tab
-            class="col-2"
+            class="col-2 q-pb-md"
             icon="photo_camera"
             v-if="hasCamera"
             @click="showCamera"
@@ -1454,6 +1454,11 @@ page_container %} {% raw %}
           if (verbose) {
             this.notifySuccess('Mint added.')
           }
+          // update balance of active mint in this.mints
+          if (this.mints.length > 0 && this.activeMintURL) {
+            this.mints.filter(m => m.url == this.activeMintURL)[0].balance =
+              this.getBalance()
+          }
           localStorage.setItem('cashu.activeMintURL', this.activeMintURL)
           console.log('### activateMint: Mint activated: ', this.activeMintURL)
         } catch (error) {
@@ -1478,10 +1483,6 @@ page_container %} {% raw %}
           .map(t => t)
           .flat()
           .reduce((sum, el) => (sum += el.amount), 0)
-        if (this.mints.length > 0 && this.activeMintURL) {
-          this.mints.filter(m => m.url == this.activeMintURL)[0].balance =
-            balance
-        }
         return balance
       },
       getShortUrl: function (url) {
