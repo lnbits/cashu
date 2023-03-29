@@ -3,7 +3,7 @@ from typing import Dict, List, Literal, Optional, Set, Union
 
 from loguru import logger
 
-from ..core.b_dhke import step2_bob
+from ..core.b_dhke import step2_bob, verify
 from ..core.bolt11 import decode
 from ..core.base import (
     BlindedMessage,
@@ -158,7 +158,7 @@ class Ledger:
             ]
 
         C = PublicKey(bytes.fromhex(proof.C), raw=True)
-        return b_dhke.verify(private_key_amount, C, proof.secret)
+        return verify(private_key_amount, C, proof.secret)
 
     def _verify_script(self, idx: int, proof: Proof) -> bool:
         """
