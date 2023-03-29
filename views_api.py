@@ -319,7 +319,7 @@ async def melt_coins(
         )
         logger.debug(f"Cashu: Initiating payment of {total_provided} sats")
         try:
-            await pay_invoice(
+            payment_hash = await pay_invoice(
                 wallet_id=cashu.wallet,
                 payment_request=invoice,
                 description="Pay cashu invoice",
@@ -335,11 +335,21 @@ async def melt_coins(
             status: PaymentStatus = await check_transaction_status(
                 cashu.wallet, invoice_obj.payment_hash
             )
+            return_promises = None
             if status.paid is True:
                 logger.debug(
                     f"Cashu: Payment successful, invalidating proofs for {invoice_obj.payment_hash}"
                 )
                 await ledger._invalidate_proofs(proofs)
+                # prepare change to compensate wallet for overpaid fees
+                if status.fee_msat and payload.outputs:
+                    return_promises = await ledger._generate_change_promises(
+                        total_provided=total_provided,
+                        invoice_amount=amount,
+                        ln_fee_msat=status.fee_msat,
+                        outputs=payload.outputs,
+                    )
+
             else:
                 logger.debug(f"Cashu: Payment failed for {invoice_obj.payment_hash}")
     except Exception as e:
@@ -353,7 +363,9 @@ async def melt_coins(
         # delete proofs from pending list
         await ledger._unset_proofs_pending(proofs)
 
-    return GetMeltResponse(paid=status.paid, preimage=status.preimage)
+    return GetMeltResponse(
+        paid=status.paid, preimage=status.preimage, change=return_promises
+    )
 
 
 @cashu_ext.post("/api/v1/{cashu_id}/check")
