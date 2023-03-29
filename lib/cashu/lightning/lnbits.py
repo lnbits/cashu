@@ -3,7 +3,7 @@ from typing import Dict, Optional
 
 import requests
 
-from cashu.core.settings import settings
+from ..core.settings import settings
 
 from .base import (
     InvoiceResponse,

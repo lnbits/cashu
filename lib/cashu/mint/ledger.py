@@ -3,10 +3,9 @@ from typing import Dict, List, Literal, Optional, Set, Union
 
 from loguru import logger
 
-import cashu.core.b_dhke as b_dhke
-import cashu.core.bolt11 as bolt11
-import cashu.core.legacy as legacy
-from cashu.core.base import (
+from ..core.b_dhke import step2_bob
+from ..core.bolt11 import decode
+from ..core.base import (
     BlindedMessage,
     BlindedSignature,
     Invoice,
@@ -14,14 +13,14 @@ from cashu.core.base import (
     MintKeysets,
     Proof,
 )
-from cashu.core.db import Database
-from cashu.core.helpers import fee_reserve, sum_proofs
-from cashu.core.script import verify_script
-from cashu.core.secp import PublicKey
-from cashu.core.settings import settings
-from cashu.core.split import amount_split
-from cashu.lightning.base import Wallet
-from cashu.mint.crud import LedgerCrud
+from ..core.db import Database
+from ..core.helpers import fee_reserve, sum_proofs
+from ..core.script import verify_script
+from ..core.secp import PublicKey
+from ..core.settings import settings
+from ..core.split import amount_split
+from ..lightning.base import Wallet
+from ..mint.crud import LedgerCrud
 
 
 class Ledger:
@@ -127,7 +126,7 @@ class Ledger:
         """
         keyset = keyset if keyset else self.keyset
         private_key_amount = keyset.private_keys[amount]
-        C_ = b_dhke.step2_bob(B_, private_key_amount)
+        C_ = step2_bob(B_, private_key_amount)
         await self.crud.store_promise(
             amount=amount, B_=B_.serialize().hex(), C_=C_.serialize().hex(), db=self.db
         )
@@ -583,7 +582,7 @@ class Ledger:
             await self._verify_proofs(proofs)
 
             total_provided = sum_proofs(proofs)
-            invoice_obj = bolt11.decode(invoice)
+            invoice_obj = decode(invoice)
             invoice_amount = math.ceil(invoice_obj.amount_msat / 1000)
             fees_msat = await self.check_fees(invoice)
             assert total_provided >= invoice_amount + fees_msat / 1000, Exception(
@@ -650,7 +649,7 @@ class Ledger:
         # hack: check if it's internal, if it exists, it will return paid = False,
         # if id does not exist (not internal), it returns paid = None
         if settings.lightning:
-            decoded_invoice = bolt11.decode(pr)
+            decoded_invoice = decode(pr)
             amount = math.ceil(decoded_invoice.amount_msat / 1000)
             paid = await self.lightning.get_invoice_status(decoded_invoice.payment_hash)
             internal = paid.paid == False
