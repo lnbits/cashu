@@ -3,7 +3,7 @@ from http import HTTPStatus
 from typing import Dict, Union
 
 # -------- cashu imports
-from cashu.core.base import (
+from .lib.cashu.core.base import (
     CheckFeesRequest,
     CheckFeesResponse,
     CheckSpendableRequest,
@@ -319,16 +319,12 @@ async def melt_coins(
         )
         logger.debug(f"Cashu: Initiating payment of {total_provided} sats")
         try:
-            payment_hash = await pay_invoice(
+            await pay_invoice(
                 wallet_id=cashu.wallet,
                 payment_request=invoice,
                 description="Pay cashu invoice",
                 extra={"tag": "cashu", "cashu_name": cashu.name},
             )
-        except Exception as e:
-            logger.debug(f"Cashu error paying invoice {invoice_obj.payment_hash}: {e}")
-            raise e
-        finally:
             logger.debug(
                 f"Cashu: Wallet {cashu.wallet} checking PaymentStatus of {invoice_obj.payment_hash}"
             )
@@ -349,9 +345,11 @@ async def melt_coins(
                         ln_fee_msat=status.fee_msat,
                         outputs=payload.outputs,
                     )
-
             else:
-                logger.debug(f"Cashu: Payment failed for {invoice_obj.payment_hash}")
+                raise Exception(f"Cashu: Payment failed for {invoice_obj.payment_hash}")
+        except Exception as e:
+            logger.debug(f"Cashu error paying invoice {invoice_obj.payment_hash}: {e}")
+            raise e
     except Exception as e:
         logger.debug(f"Cashu: Exception: {str(e)}")
         raise HTTPException(
