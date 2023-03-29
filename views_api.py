@@ -261,7 +261,7 @@ async def mint(
             promises = await ledger._generate_promises(B_s=data.outputs, keyset=keyset)
             return PostMintResponse(promises=promises)
         except (Exception, HTTPException) as e:
-            logger.debug(f"Cashu: /melt {str(e) or getattr(e, 'detail')}")
+            logger.debug(f"Cashu: /mint {str(e) or getattr(e, 'detail')}")
             # unset issued flag because something went wrong
             await ledger.crud.update_lightning_invoice(
                 db=ledger.db, hash=payment_hash, issued=False
@@ -338,7 +338,7 @@ async def melt_coins(
                 )
                 await ledger._invalidate_proofs(proofs)
                 # prepare change to compensate wallet for overpaid fees
-                if status.fee_msat and payload.outputs:
+                if status.fee_msat is not None and payload.outputs:
                     return_promises = await ledger._generate_change_promises(
                         total_provided=total_provided,
                         invoice_amount=amount,
@@ -351,7 +351,7 @@ async def melt_coins(
             logger.debug(f"Cashu error paying invoice {invoice_obj.payment_hash}: {e}")
             raise e
     except Exception as e:
-        logger.debug(f"Cashu: Exception: {str(e)}")
+        logger.debug(f"Cashu /melt: Exception: {str(e)}")
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
             detail=f"Cashu: {str(e)}",
