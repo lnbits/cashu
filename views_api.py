@@ -369,7 +369,7 @@ async def melt_coins(
 @cashu_ext.post("/api/v1/{cashu_id}/check")
 async def check_spendable(
     payload: CheckSpendableRequest, cashu_id: str = Query(None)
-) -> Dict[int, bool]:
+) -> CheckSpendableResponse:
     """Check whether a secret has been spent already or not."""
     cashu: Union[None, Cashu] = await get_cashu(cashu_id)
     if cashu is None:
