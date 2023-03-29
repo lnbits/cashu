@@ -19,6 +19,7 @@ cashu_static_files = [
     }
 ]
 from cashu.mint.ledger import Ledger
+from cashu.lightning.base import Wallet
 
 env = Env()
 env.read_env()
@@ -27,6 +28,7 @@ ledger = Ledger(
     db=db,
     seed=env.str("CASHU_PRIVATE_KEY", default="SuperSecretPrivateKey"),
     derivation_path="0/0/0/1",
+    lightning=Wallet,
 )
 
 cashu_ext: APIRouter = APIRouter(prefix="/cashu", tags=["cashu"])
