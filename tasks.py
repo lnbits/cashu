@@ -1,7 +1,7 @@
 import asyncio
 
-from cashu.core.migrations import migrate_databases
-from cashu.mint import migrations
+from .lib.cashu.core.migrations import migrate_databases
+from .lib.cashu.mint import migrations
 
 from lnbits.core.models import Payment
 from lnbits.tasks import register_invoice_listener
