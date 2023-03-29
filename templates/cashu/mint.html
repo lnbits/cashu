@@ -13,17 +13,27 @@
             <h4 class="q-mt-sm q-mb-md">
               {% endraw %}{{ mint_name }}{% raw %}
             </h4>
-            <a
-              class="text-secondary"
-              class="q-my-xl text-white"
-              style="font-size: 1.5rem"
-              href="../wallet?mint_id={% endraw %}{{ mint_id }}{% raw %}"
-              >Open wallet</a
+            <p class="q-mb-none">Wallet:</p>
+            <q-btn
+              unelevated
+              dense
+              size="xl"
+              icon="account_balance_wallet"
+              color="($q.dark.isActive) ? 'grey-7' : 'grey-5'"
+              type="a"
+              :href="'https://wallet.cashu.me?mint='+mintURL.base_url+'/cashu/api/v1/{% endraw %}{{mint_id}}{% raw %}'"
+              target="_blank"
+              ><q-tooltip>Open in Cashu.me</q-tooltip></q-btn
             >
             <br /><br />
+            <p class="q-mb-sm">Mint URL:</p>
             <p>
-              Mint URL: {{ mintURL.base_url }}/cashu/api/v1/{% endraw
-              %}{{mint_id}}{% raw %}
+              <q-badge
+                outline
+                class="q-ml-sm text-subtitle2"
+                color="($q.dark.isActive) ? 'grey-7' : 'grey-5'"
+                :label="mintURL.base_url + '/cashu/api/v1/{% endraw %}{{mint_id}}{% raw %}'"
+              />
             </p>
           </center>
         </q-card-section>
