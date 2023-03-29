@@ -3,7 +3,7 @@ from http import HTTPStatus
 from typing import Dict, Union
 
 # -------- cashu imports
-from cashu.core.base import (
+from .lib.cashu.core.base import (
     CheckFeesRequest,
     CheckFeesResponse,
     CheckSpendableRequest,
@@ -325,23 +325,31 @@ async def melt_coins(
                 description="Pay cashu invoice",
                 extra={"tag": "cashu", "cashu_name": cashu.name},
             )
-        except Exception as e:
-            logger.debug(f"Cashu error paying invoice {invoice_obj.payment_hash}: {e}")
-            raise e
-        finally:
             logger.debug(
                 f"Cashu: Wallet {cashu.wallet} checking PaymentStatus of {invoice_obj.payment_hash}"
             )
             status: PaymentStatus = await check_transaction_status(
                 cashu.wallet, invoice_obj.payment_hash
             )
+            return_promises = None
             if status.paid is True:
                 logger.debug(
                     f"Cashu: Payment successful, invalidating proofs for {invoice_obj.payment_hash}"
                 )
                 await ledger._invalidate_proofs(proofs)
+                # prepare change to compensate wallet for overpaid fees
+                if status.fee_msat and payload.outputs:
+                    return_promises = await ledger._generate_change_promises(
+                        total_provided=total_provided,
+                        invoice_amount=amount,
+                        ln_fee_msat=status.fee_msat,
+                        outputs=payload.outputs,
+                    )
             else:
-                logger.debug(f"Cashu: Payment failed for {invoice_obj.payment_hash}")
+                raise Exception(f"Cashu: Payment failed for {invoice_obj.payment_hash}")
+        except Exception as e:
+            logger.debug(f"Cashu error paying invoice {invoice_obj.payment_hash}: {e}")
+            raise e
     except Exception as e:
         logger.debug(f"Cashu: Exception: {str(e)}")
         raise HTTPException(
@@ -353,7 +361,9 @@ async def melt_coins(
         # delete proofs from pending list
         await ledger._unset_proofs_pending(proofs)
 
-    return GetMeltResponse(paid=status.paid, preimage=status.preimage)
+    return GetMeltResponse(
+        paid=status.paid, preimage=status.preimage, change=return_promises
+    )
 
 
 @cashu_ext.post("/api/v1/{cashu_id}/check")

@@ -60,11 +60,22 @@
                   dense
                   size="xs"
                   icon="account_balance_wallet"
+                  :color="($q.dark.isActive) ? 'green-7' : 'green-5'"
+                  type="a"
+                  :href="'https://wallet.cashu.me?mint='+base_url+'/cashu/api/v1/' + props.row.id"
+                  target="_blank"
+                  ><q-tooltip>Open in Cashu.me</q-tooltip></q-btn
+                >
+                <q-btn
+                  unelevated
+                  dense
+                  size="xs"
+                  icon="bedtime"
                   :color="($q.dark.isActive) ? 'grey-7' : 'grey-5'"
                   type="a"
                   :href="'wallet/?' + 'mint_id=' + props.row.id"
                   target="_blank"
-                  ><q-tooltip>Shareable wallet</q-tooltip></q-btn
+                  ><q-tooltip>Open in old wallet</q-tooltip></q-btn
                 >
 
                 <q-btn
@@ -233,6 +244,7 @@
     mixins: [windowMixin],
     data: function () {
       return {
+        base_url: location.protocol + '//' + location.host,
         cashus: [],
         hostname: location.protocol + '//' + location.host + '/cashu/mint/',
         toggleAdvanced: false,

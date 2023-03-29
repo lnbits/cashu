@@ -34,6 +34,56 @@ page_container %} {% raw %}
             </div>
           </q-card-section>
         </q-card>
+        <q-card class="q-my-md q-py-sm">
+          <div class="row items-center no-wrap q-mb-sm">
+            <div class="col-1"></div>
+            <div class="col-10">
+              <p>
+                <strong>Warning:</strong> This wallet is sunsetting. A new
+                version is now at
+              </p>
+              <p>
+                <a
+                  href="https://wallet.cashu.me"
+                  target="_blank"
+                  style="text-decoration: none"
+                >
+                  <q-btn
+                    size="0.8rem"
+                    color="primary"
+                    label="https://wallet.cashu.me"
+                  ></q-btn>
+                </a>
+              </p>
+              <p>
+                Please take a moment to open the new wallet in your browser and
+                bookmark it or add it to your Home Screen on your mobile phone.
+                On Android Chrome, click the hamburger menu at the upper right.
+                On iOS Safari, click the share button. Now press the Add to Home
+                screen button.
+              </p>
+              <p>
+                Click the button below to send your funds on this mint to the
+                new wallet. If you have funds in other mints, activate them in
+                the settings and repeat the process with all other mints.
+              </p>
+              <q-btn
+                size="0.8rem"
+                rectangle
+                unelevated
+                dense
+                color="orange"
+                align="between"
+                icon="send"
+                icon-right="toll"
+                class="full-width"
+                @click="sendBalanceToCashuMe"
+                >Send balance on this mint to new wallet</q-btn
+              >
+            </div>
+            <div class="col-1"></div>
+          </div>
+        </q-card>
 
         <q-card class="q-mt-xs">
           <q-card-section class="q-pt-sm">
@@ -1828,6 +1878,16 @@ page_container %} {% raw %}
 
       showAddMintDialog: function () {
         this.addMintDialog.show = true
+      },
+
+      //////////////////// MIGRATE TO CASHU.ME ///////////////////////////////
+      sendBalanceToCashuMe: async function () {
+        // send all active proofs
+        this.sendData.amount = this.getBalance()
+        await this.sendTokens()
+        let tokenB64 = this.sendData.tokensBase64
+        let url = `https://wallet.cashu.me?token=${tokenB64}`
+        window.open(url, '_blank').focus()
       },
 
       //////////////////////// MINT //////////////////////////////////////////
