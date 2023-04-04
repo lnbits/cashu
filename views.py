@@ -38,7 +38,7 @@ async def wallet(request: Request, mint_id: Optional[str] = None):
         manifest_url = "/cashu/cashu.webmanifest"
         mint_name = "Cashu mint"
 
-    return FileResponse('/cashu/static/wallet/dist/spa/index.html')
+    return FileResponse('/cashu/static/dist/spa/index.html')
 
 
 @cashu_ext.get("/mint/{mintID}")
