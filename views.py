@@ -4,13 +4,15 @@ from typing import Optional
 from fastapi import Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException
-from starlette.responses import HTMLResponse, FileResponse
+from starlette.responses import HTMLResponse
 
 from lnbits.core.models import User
 from lnbits.decorators import check_user_exists
+from lnbits.settings import settings
 
 from . import cashu_ext, cashu_renderer
 from .crud import get_cashu
+import os
 
 templates = Jinja2Templates(directory="templates")
 
@@ -37,7 +39,10 @@ async def wallet(request: Request, mint_id: Optional[str] = None):
     else:
         manifest_url = "/cashu/cashu.webmanifest"
         mint_name = "Cashu mint"
-    return HTMLResponse('static/dist/spa/index.html')
+    # Reading the wallet index.html
+    with open(os.path.join(settings.lnbits_path, "extensions/cashu/static/dist/spa/index.html")) as fh:
+        data = fh.read()
+    return HTMLResponse(content=data)
 
 
 @cashu_ext.get("/mint/{mintID}")

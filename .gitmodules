@@ -1,9 +1,0 @@
-[submodule "static/--FORCE"]
-	path = static/--FORCE
-	url = https://github.com/arcbtc/cashu.me.git
-[submodule "static/--wallet"]
-	path = static/--wallet
-	url = https://github.com/arcbtc/cashu.me.git
-[submodule "static/wallet"]
-	path = static/wallet
-	url = https://github.com/arcbtc/cashu.me.git
