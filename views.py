@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException
-from starlette.responses import HTMLResponse
+from starlette.responses import HTMLResponse, FileResponse
 
 from lnbits.core.models import User
 from lnbits.decorators import check_user_exists
@@ -39,14 +39,7 @@ async def wallet(request: Request, mint_id: Optional[str] = None):
         manifest_url = "/cashu/cashu.webmanifest"
         mint_name = "Cashu mint"
 
-    return cashu_renderer().TemplateResponse(
-        "cashu/wallet.html",
-        {
-            "request": request,
-            "web_manifest": manifest_url,
-            "mint_name": mint_name,
-        },
-    )
+    return FileResponse('..static/cashu.me/dist/spa/index.html')
 
 
 @cashu_ext.get("/mint/{mintID}")

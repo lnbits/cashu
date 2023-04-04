@@ -73,7 +73,7 @@
                   icon="bedtime"
                   :color="($q.dark.isActive) ? 'grey-7' : 'grey-5'"
                   type="a"
-                  :href="'wallet/?' + 'mint_id=' + props.row.id"
+                  :href="'wallet/?mint='+base_url+'/cashu/api/v1/' + props.row.id '&' + 'mint_id=' + props.row.id"
                   target="_blank"
                   ><q-tooltip>Open in old wallet</q-tooltip></q-btn
                 >
