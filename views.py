@@ -14,7 +14,6 @@ from .crud import get_cashu
 
 templates = Jinja2Templates(directory="templates")
 
-
 @cashu_ext.get("/", response_class=HTMLResponse)
 async def index(
     request: Request,
