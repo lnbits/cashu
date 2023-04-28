@@ -8,12 +8,13 @@ from starlette.responses import HTMLResponse
 
 from lnbits.core.models import User
 from lnbits.decorators import check_user_exists
+from lnbits.settings import settings
 
 from . import cashu_ext, cashu_renderer
 from .crud import get_cashu
+import os
 
 templates = Jinja2Templates(directory="templates")
-
 
 @cashu_ext.get("/", response_class=HTMLResponse)
 async def index(
@@ -38,15 +39,10 @@ async def wallet(request: Request, mint_id: Optional[str] = None):
     else:
         manifest_url = "/cashu/cashu.webmanifest"
         mint_name = "Cashu mint"
-
-    return cashu_renderer().TemplateResponse(
-        "cashu/wallet.html",
-        {
-            "request": request,
-            "web_manifest": manifest_url,
-            "mint_name": mint_name,
-        },
-    )
+    # Reading the wallet index.html
+    with open(os.path.join(settings.lnbits_path, "extensions/cashu/static/dist/spa/index.html")) as fh:
+        data = fh.read()
+    return HTMLResponse(content=data)
 
 
 @cashu_ext.get("/mint/{mintID}")
