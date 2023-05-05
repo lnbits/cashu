@@ -31,7 +31,6 @@ If true, C must have originated from Bob
 """
 
 import hashlib
-from typing import Optional
 
 from secp256k1 import PrivateKey, PublicKey
 
@@ -51,10 +50,13 @@ def hash_to_curve(message: bytes) -> PublicKey:
 
 
 def step1_alice(
-    secret_msg: str, r: Optional[PrivateKey] = None
+    secret_msg: str, blinding_factor: bytes = None
 ) -> tuple[PublicKey, PrivateKey]:
     Y: PublicKey = hash_to_curve(secret_msg.encode("utf-8"))
-    r = r or PrivateKey()
+    if blinding_factor:
+        r = PrivateKey(privkey=blinding_factor, raw=True)
+    else:
+        r = PrivateKey()
     B_: PublicKey = Y + r.pubkey
     return B_, r
 

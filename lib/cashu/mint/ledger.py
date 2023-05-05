@@ -3,8 +3,9 @@ from typing import Dict, List, Literal, Optional, Set, Union
 
 from loguru import logger
 
-from ..core.b_dhke import step2_bob, verify
-from ..core.bolt11 import decode
+from ..core import b_dhke as b_dhke
+from ..core import bolt11 as bolt11
+from ..core import legacy as legacy
 from ..core.base import (
     BlindedMessage,
     BlindedSignature,
@@ -13,6 +14,7 @@ from ..core.base import (
     MintKeysets,
     Proof,
 )
+from ..core.crypto import derive_pubkey
 from ..core.db import Database
 from ..core.helpers import fee_reserve, sum_proofs
 from ..core.script import verify_script
@@ -39,6 +41,8 @@ class Ledger:
         self.db = db
         self.crud = crud
         self.lightning = lightning
+        self.pubkey = derive_pubkey(self.master_key)
+        self.keysets = MintKeysets([])
 
     async def load_used_proofs(self):
         """Load all used proofs from database."""
@@ -83,11 +87,21 @@ class Ledger:
         """
         # load all past keysets from db
         tmp_keysets: List[MintKeyset] = await self.crud.get_keyset(db=self.db)
-        self.keysets = MintKeysets(tmp_keysets)
-        logger.trace(f"Loading {len(self.keysets.keysets)} keysets form db.")
-        # generate all derived keys from stored derivation paths of past keysets
+        # add keysets from db to current keysets
+        for k in tmp_keysets:
+            if k.id and k.id not in self.keysets.keysets:
+                self.keysets.keysets[k.id] = k
+
+        logger.debug(
+            f"Currently, there are {len(self.keysets.keysets)} active keysets."
+        )
+
+        # generate all private keys, public keys, and keyset id from the derivation path for all keysets that are not yet generated
         for _, v in self.keysets.keysets.items():
-            logger.trace(f"Generating keys for keyset {v.id}")
+            # we already generated the keys for this keyset
+            if v.id and v.public_keys and len(v.public_keys):
+                continue
+            logger.debug(f"Generating keys for keyset {v.id}")
             v.generate_keys(self.master_key)
         # load the current keyset
         self.keyset = await self.load_keyset(self.derivation_path, autosave)
@@ -125,8 +139,9 @@ class Ledger:
             BlindedSignature: Generated promise.
         """
         keyset = keyset if keyset else self.keyset
+        logger.trace(f"Generating promise with keyset {keyset.id}.")
         private_key_amount = keyset.private_keys[amount]
-        C_ = step2_bob(B_, private_key_amount)
+        C_ = b_dhke.step2_bob(B_, private_key_amount)
         await self.crud.store_promise(
             amount=amount, B_=B_.serialize().hex(), C_=C_.serialize().hex(), db=self.db
         )
@@ -152,13 +167,16 @@ class Ledger:
         if not proof.id:
             private_key_amount = self.keyset.private_keys[proof.amount]
         else:
+            logger.trace(
+                f"Validating proof with keyset {self.keysets.keysets[proof.id].id}."
+            )
             # use the appropriate active keyset for this proof.id
             private_key_amount = self.keysets.keysets[proof.id].private_keys[
                 proof.amount
             ]
 
         C = PublicKey(bytes.fromhex(proof.C), raw=True)
-        return verify(private_key_amount, C, proof.secret)
+        return b_dhke.verify(private_key_amount, C, proof.secret)
 
     def _verify_script(self, idx: int, proof: Proof) -> bool:
         """
@@ -431,6 +449,7 @@ class Ledger:
         invoice_amount: int,
         ln_fee_msat: int,
         outputs: List[BlindedMessage],
+        keyset: Optional[MintKeyset] = None,
     ):
         """Generates a set of new promises (blinded signatures) from a set of blank outputs
         (outputs with no or ignored amount) by looking at the difference between the Lightning
@@ -479,7 +498,7 @@ class Ledger:
                 outputs[i].amount = return_amounts_sorted[i]
             if not self._verify_no_duplicate_outputs(outputs):
                 raise Exception("duplicate promises.")
-            return_promises = await self._generate_promises(outputs)
+            return_promises = await self._generate_promises(outputs, keyset)
             return return_promises
         else:
             return []
@@ -582,7 +601,7 @@ class Ledger:
             await self._verify_proofs(proofs)
 
             total_provided = sum_proofs(proofs)
-            invoice_obj = decode(invoice)
+            invoice_obj = bolt11.decode(invoice)
             invoice_amount = math.ceil(invoice_obj.amount_msat / 1000)
             fees_msat = await self.check_fees(invoice)
             assert total_provided >= invoice_amount + fees_msat / 1000, Exception(
@@ -611,6 +630,8 @@ class Ledger:
                         ln_fee_msat=fee_msat,
                         outputs=outputs,
                     )
+            else:
+                raise Exception("Lightning payment unsuccessful.")
 
         except Exception as e:
             raise e
@@ -649,7 +670,7 @@ class Ledger:
         # hack: check if it's internal, if it exists, it will return paid = False,
         # if id does not exist (not internal), it returns paid = None
         if settings.lightning:
-            decoded_invoice = decode(pr)
+            decoded_invoice = bolt11.decode(pr)
             amount = math.ceil(decoded_invoice.amount_msat / 1000)
             paid = await self.lightning.get_invoice_status(decoded_invoice.payment_hash)
             internal = paid.paid == False
@@ -725,11 +746,3 @@ class Ledger:
         # verify amounts in produced proofs
         self._verify_equation_balanced(proofs, prom_fst + prom_snd)
         return prom_fst, prom_snd
-
-    async def restore(self, outputs: List[BlindedMessage]) -> list[BlindedSignature]:
-        promises: List[BlindedSignature] = []
-        for output in outputs:
-            promise = await self.crud.get_promise(B_=output.B_, db=self.db)
-            if promise is not None:
-                promises.append(promise)
-        return promises

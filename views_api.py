@@ -2,21 +2,6 @@ import math
 from http import HTTPStatus
 from typing import Dict, Union
 
-# -------- cashu imports
-from .lib.cashu.core.base import (
-    CheckFeesRequest,
-    CheckFeesResponse,
-    CheckSpendableRequest,
-    CheckSpendableResponse,
-    GetMeltResponse,
-    GetMintResponse,
-    Invoice,
-    PostMeltRequest,
-    PostMintRequest,
-    PostMintResponse,
-    PostSplitRequest,
-    PostSplitResponse,
-)
 from fastapi import Depends, Query
 from loguru import logger
 from starlette.exceptions import HTTPException
@@ -35,6 +20,22 @@ from lnbits.wallets.base import PaymentStatus
 
 from . import cashu_ext, ledger
 from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
+
+# -------- cashu imports
+from .lib.cashu.core.base import (
+    CheckFeesRequest,
+    CheckFeesResponse,
+    CheckSpendableRequest,
+    CheckSpendableResponse,
+    GetMeltResponse,
+    GetMintResponse,
+    Invoice,
+    PostMeltRequest,
+    PostMintRequest,
+    PostMintResponse,
+    PostSplitRequest,
+    PostSplitResponse,
+)
 from .models import Cashu
 
 # --------- extension imports
@@ -339,11 +340,13 @@ async def melt_coins(
                 await ledger._invalidate_proofs(proofs)
                 # prepare change to compensate wallet for overpaid fees
                 if status.fee_msat is not None and payload.outputs:
+                    keyset = ledger.keysets.keysets[cashu.keyset_id]
                     return_promises = await ledger._generate_change_promises(
                         total_provided=total_provided,
                         invoice_amount=amount,
                         ln_fee_msat=status.fee_msat,
                         outputs=payload.outputs,
+                        keyset=keyset,
                     )
             else:
                 raise Exception(f"Cashu: Payment failed for {invoice_obj.payment_hash}")
