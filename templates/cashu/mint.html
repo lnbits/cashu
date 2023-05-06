@@ -11,13 +11,13 @@
               style="max-width: 20%"
             ></q-img>
             <h4 class="q-mt-sm q-mb-md">
-              {% endraw %}{{ mint_name }}{% raw %}
+              Name: {% endraw %}{{ mint_name }}{% raw %}
             </h4>
-            <p class="q-mb-none">Open this mint in a wallet:</p>
+            <h5 class="q-mb-md">Open mint in a wallet</h5>
             <q-btn
-              unelevated
+              outline
               dense
-              size="xl"
+              size="md"
               icon="account_balance_wallet"
               color="($q.dark.isActive) ? 'green-7' : 'green-5'"
               type="a"
@@ -26,9 +26,9 @@
               ><q-tooltip>Open in Cashu.me</q-tooltip>Cashu.me</q-btn
             >
             <q-btn
-              unelevated
+              outline
               dense
-              size="xl"
+              size="md"
               icon="account_balance_wallet"
               color="($q.dark.isActive) ? 'yellow-7' : 'yellow-5'"
               type="a"
@@ -37,13 +37,23 @@
               ><q-tooltip>Open in Nutstash</q-tooltip>Nutstash</q-btn
             >            
             <br /><br />
-            <p class="q-mb-sm">Mint URL:</p>
+            <h5 class="q-my-sm">Copy mint URL</h5>
+            <q-input
+            outlined
+            readonly
+            :label="mintURL.base_url + '/cashu/api/v1/{% endraw %}{{mint_id}}{% raw %}'"
+            type="textarea"
+            autogrow
+            class="q-mb-xs"
+          ></q-input>
             <p>
-              <q-badge
+              <q-btn
                 outline
-                class="q-ml-sm text-subtitle2"
+                icon="content_copy"
+                class="q-mt-md"
                 color="($q.dark.isActive) ? 'grey-7' : 'grey-5'"
-                :label="mintURL.base_url + '/cashu/api/v1/{% endraw %}{{mint_id}}{% raw %}'"
+                label="Copy"
+                @click="copyText(mintURL.base_url + '/cashu/api/v1/{% endraw %}{{mint_id}}{% raw %}')"
               />
             </p>
           </center>
