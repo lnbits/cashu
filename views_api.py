@@ -80,13 +80,15 @@ async def api_cashu_create(
     Create a new mint for this wallet.
     """
     cashu_id = urlsafe_short_hash()
+    
     # generate a new keyset in cashu
-    keyset = await ledger.load_keyset(cashu_id)
+    keyset_derivation_path = urlsafe_short_hash()
+    keyset = await ledger.load_keyset(derivation_path=keyset_derivation_path)
 
     cashu = await create_cashu(
         cashu_id=cashu_id, keyset_id=keyset.id, wallet_id=wallet.wallet.id, data=data
     )
-    logger.debug(cashu)
+    logger.debug(f"Cashu mint created: {cashu_id}")
     return cashu.dict()
 
 

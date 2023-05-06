@@ -4,21 +4,19 @@
   <div class="col-12 col-md-8 col-lg-7 q-gutter-y-md">
     <q-card>
       <q-card-section>
-        <b>Cashu mint and wallet</b>
+        <b>Cashu mint</b>
         <p></p>
         <p>
-          Here you can create multiple cashu mints that you can share. Each mint
-          can service many users but all ecash tokens of a mint are only valid
-          inside that mint and not across different mints. To exchange funds
-          between mints, use Lightning payments.
+          Create Cashu mints that can use your LNbits wallet as a funding
+          source. Each Cashu mint can be used by as many people as you want.
+          There are different Cashu wallets that you can use with your mint.
+          Click on the icon at each mint to try different wallets.
         </p>
         <b>Important</b>
         <p></p>
         <p>
-          If you are the operator of this LNbits instance, make sure to set
-          CASHU_PRIVATE_KEY="randomkey" in your configuration file. Do not
-          create mints before setting the key and do not change the key once
-          set.
+          Cashu is still beta software and in its early
+          stages. Use this Cashu mint only with small amounts.
         </p>
       </q-card-section>
     </q-card>
@@ -27,7 +25,7 @@
       <q-card-section>
         <div class="row items-center no-wrap q-mb-md">
           <div class="col">
-            <h5 class="text-subtitle1 q-my-none">Mints</h5>
+            <h5 class="text-subtitle1 q-my-none">Your Cashu mints</h5>
           </div>
           <div class="col-auto">
             <q-btn flat color="grey" @click="exportCSV">Export to CSV</q-btn>
@@ -59,40 +57,54 @@
                   unelevated
                   dense
                   size="xs"
+                  class="q-px-xs"
                   icon="account_balance_wallet"
                   :color="($q.dark.isActive) ? 'green-7' : 'green-5'"
                   type="a"
                   :href="'https://wallet.cashu.me?mint='+base_url+'/cashu/api/v1/' + props.row.id"
                   target="_blank"
-                  ><q-tooltip>Open in Cashu.me</q-tooltip></q-btn
+                  ><q-tooltip>Open in Cashu.me</q-tooltip>Cashu.me</q-btn
                 >
                 <q-btn
                   unelevated
                   dense
+                  class="q-px-xs"
                   size="xs"
-                  icon="bedtime"
-                  :color="($q.dark.isActive) ? 'grey-7' : 'grey-5'"
+                  icon="account_balance_wallet"
+                  :color="($q.dark.isActive) ? 'yellow-7' : 'yellow-5'"
                   type="a"
-                  :href="'wallet/?' + 'mint_id=' + props.row.id"
+                  :href="'https://wallet.nutstash.app?mint='+base_url+'/cashu/api/v1/' + props.row.id"
                   target="_blank"
-                  ><q-tooltip>Open in old wallet</q-tooltip></q-btn
+                  ><q-tooltip>Open in Nutstash</q-tooltip>Nutstash</q-btn
                 >
-
                 <q-btn
                   unelevated
                   dense
+                  class="q-mr-xl q-px-xs"
                   size="xs"
                   icon="account_balance"
                   :color="($q.dark.isActive) ? 'grey-7' : 'grey-5'"
-                  type="a"
                   :href="'mint/' + props.row.id"
                   target="_blank"
-                  ><q-tooltip>Shareable mint page</q-tooltip></q-btn
+                  ><q-tooltip>Shareable mint page</q-tooltip>Mint</q-btn
                 >
               </q-td>
               <q-td v-for="col in props.cols" :key="col.name" :props="props">
-                {{ (col.name == 'tip_options' && col.value ?
-                JSON.parse(col.value).join(", ") : col.value) }}
+                {{
+                  col.name == 'tip_options' && col.value
+                    ? JSON.parse(col.value).join(', ')
+                    : col.value
+                }}
+                <q-btn
+                  v-if="col.name == 'id'"
+                  flat
+                  dense
+                  size="0.4rem"
+                  class="q-px-none q-mx-none"
+                  color="grey"
+                  icon="content_copy"
+                  @click="copyText(base_url+'/cashu/api/v1/' + props.row.id)"
+                ><q-tooltip>Copy mint URL</q-tooltip></q-btn>
               </q-td>
               <q-td auto-width>
                 <q-btn
@@ -112,6 +124,7 @@
           class="q-pt-l"
           unelevated
           color="primary"
+          icon="add"
           @click="formDialog.show = true"
           >New Mint</q-btn
         >
@@ -122,7 +135,9 @@
   <div class="col-12 col-md-5 q-gutter-y-md">
     <q-card>
       <q-card-section>
-        <h6 class="text-subtitle1 q-my-none">{{SITE_TITLE}} Cashu extension</h6>
+        <h6 class="text-subtitle1 q-my-none">
+          {{ SITE_TITLE }} Cashu extension
+        </h6>
       </q-card-section>
       <q-card-section class="q-pa-none">
         <q-separator></q-separator>
