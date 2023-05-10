@@ -15,8 +15,8 @@
         <b>Important</b>
         <p></p>
         <p>
-          Cashu is still beta software and in its early
-          stages. Use this Cashu mint only with small amounts.
+          Cashu is still beta software and in its early stages. Use this Cashu
+          mint only with small amounts.
         </p>
       </q-card-section>
     </q-card>
@@ -104,7 +104,8 @@
                   color="grey"
                   icon="content_copy"
                   @click="copyText(base_url+'/cashu/api/v1/' + props.row.id)"
-                ><q-tooltip>Copy mint URL</q-tooltip></q-btn>
+                  ><q-tooltip>Copy mint URL</q-tooltip></q-btn
+                >
               </q-td>
               <q-td auto-width>
                 <q-btn
@@ -150,9 +151,10 @@
     </q-card>
   </div>
 
-  <q-dialog v-model="formDialog.show" position="top" @hide="closeFormDialog">
-    <q-card class="q-pa-lg q-pt-xl" style="width: 500px">
+  <q-dialog v-model="formDialog.show" @hide="closeFormDialog">
+    <q-card class="q-pa-lg q-pt-xl lnbits__dialog-card" style="width: 500px">
       <q-form @submit="createMint" class="q-gutter-md">
+        <h5>Cashu mint settings</h5>
         <q-input
           filled
           dense
@@ -226,13 +228,125 @@
             placeholder="∞"
           ></q-input>
         </div> -->
+        <q-expansion-item
+          group="advanced"
+          icon="settings"
+          label="Advanced options"
+        >
+          <q-card>
+            <q-card-section>
+              <h5 class="text-caption q-mt-sm q-mb-none">Mint messages</h5>
+              <div class="row">
+                <div class="col-12">
+                  <q-input
+                    filled
+                    dense
+                    v-model.number="formDialog.data.comment_chars"
+                    type="number"
+                    label="Comment maximum characters"
+                    hint="Allow the payer to attach a comment."
+                  >
+                  </q-input>
+                </div>
+              </div>
+              <div class="row">
+                <div class="col-12">
+                  <q-input
+                    filled
+                    dense
+                    v-model="formDialog.data.webhook_url"
+                    type="text"
+                    label="Webhook URL (optional)"
+                    hint="A URL to be called whenever this link receives a payment."
+                  ></q-input>
+                </div>
+              </div>
+              <div class="row">
+                <div class="col-12">
+                  <q-input
+                    filled
+                    dense
+                    v-if="formDialog.data.webhook_url"
+                    v-model="formDialog.data.webhook_headers"
+                    type="text"
+                    label="Webhook headers (optional)"
+                    hint="Custom data as JSON string, send headers along with the webhook."
+                  ></q-input>
+                </div>
+              </div>
+              <div class="row">
+                <div class="col-12">
+                  <q-input
+                    filled
+                    dense
+                    v-if="formDialog.data.webhook_url"
+                    v-model="formDialog.data.webhook_body"
+                    type="text"
+                    label="Webhook custom data (optional)"
+                    hint="Custom data as JSON string, will get posted along with webhook 'body' field."
+                  ></q-input>
+                </div>
+              </div>
+              <div class="row">
+                <div class="col-12">
+                  <q-input
+                    filled
+                    dense
+                    v-model="formDialog.data.success_text"
+                    type="text"
+                    label="Success message (optional)"
+                    hint="Will be shown to the user in his wallet after a successful payment."
+                  ></q-input>
+                </div>
+              </div>
+              <div class="row">
+                <div class="col-12">
+                  <q-input
+                    filled
+                    dense
+                    v-model="formDialog.data.success_url"
+                    type="text"
+                    label="Success URL (optional)"
+                    hint="Link will be shown to the sender after a successful payment."
+                  >
+                  </q-input>
+                </div>
+              </div>
+            </q-card-section>
+            <q-card-section>
+              <h5 class="text-caption q-mt-sm q-mb-none">Management</h5>
+            <div class="row q-col-gutter-sm">
+              <div class="col">
+                <q-checkbox
+                  dense
+                  v-model="formDialog.fixedAmount"
+                  label="Peg-out only"
+                />
+              </div>
+            </div>
+          </q-card-section>
+            <q-card-section>
+              <h5 class="text-caption q-mt-sm q-mb-none">Nostr</h5>
+              <div class="row">
+                <div class="col-12">
+                  <q-checkbox
+                    :toggle-indeterminate="false"
+                    dense
+                    v-model="formDialog.data.zaps"
+                    label="Enable nostr zaps"
+                  />
+                </div>
+              </div>
+            </q-card-section>
+          </q-card>
+        </q-expansion-item>
         <div class="row q-mt-md">
           <q-btn
             unelevated
             color="primary"
             :disable="formDialog.data.wallet == null || formDialog.data.name == null"
             type="submit"
-            >Create Mint
+            >Save Mint
           </q-btn>
           <q-btn v-close-popup flat color="grey" class="q-ml-auto"
             >Cancel</q-btn

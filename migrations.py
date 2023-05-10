@@ -31,3 +31,14 @@ async def m001_initial(db):
         );
     """
     )
+
+
+async def m002_add_mint_settings(db):
+    """
+    Add mint options.
+    """
+    await db.execute("ALTER TABLE cashu.cashu ADD COLUMN max_mint INT;")
+    await db.execute(
+        "ALTER TABLE cashu.cashu ADD COLUMN peg_out_only BOOL DEFAULT false;"
+    )
+    await db.execute("ALTER TABLE cashu.cashu ADD COLUMN mint_information TEXT;")
