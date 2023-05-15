@@ -212,6 +212,7 @@ async def request_mint(cashu_id: str = Query(None), amount: int = 0) -> GetMintR
 async def mint(
     data: PostMintRequest,
     cashu_id: str = Query(None),
+    hash: str = Query(None),
     payment_hash: str = Query(None),
 ) -> PostMintResponse:
     """
@@ -223,6 +224,10 @@ async def mint(
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
+    # BEGIN: backwards compatibility < 0.12 where we used to lookup payments with payment_hash
+    # We use the payment_hash to lookup the hash from the database and pass that one along.
+    hash = payment_hash or hash
+    # END: backwards compatibility < 0.12
 
     keyset = ledger.keysets.keysets[cashu.keyset_id]
 
