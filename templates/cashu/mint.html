@@ -8,7 +8,7 @@
             <q-img
               src="/cashu/static/image/cashu.png"
               spinner-color="white"
-              style="max-width: 20%; border-radius: 50%;"
+              style="max-width: 20%; border-radius: 50%"
             ></q-img>
             <h4 class="q-mt-sm q-mb-md">
               {% endraw %}{{ mint_name }}{% raw %}
@@ -22,7 +22,9 @@
               icon="account_balance_wallet"
               color="($q.dark.isActive) ? 'green-7' : 'green-5'"
               type="a"
-              :href="'https://wallet.cashu.me?mint='+mintURL.base_url+'/cashu/api/v1/{% endraw %}{{mint_id}}{% raw %}'"
+              :href="'https://wallet.cashu.me?mint='+mintURL.base_url+'/cashu/api/v1/{% endraw %}{{
+                mint_id
+              }}{% raw %}'"
               target="_blank"
               ><q-tooltip>Open in Cashu.me</q-tooltip>Cashu.me</q-btn
             >
@@ -34,20 +36,24 @@
               icon="account_balance_wallet"
               color="($q.dark.isActive) ? 'yellow-7' : 'yellow-5'"
               type="a"
-              :href="'https://wallet.cashu.me?mint='+mintURL.base_url+'/cashu/api/v1/{% endraw %}{{mint_id}}{% raw %}'"
+              :href="'https://wallet.cashu.me?mint='+mintURL.base_url+'/cashu/api/v1/{% endraw %}{{
+                mint_id
+              }}{% raw %}'"
               target="_blank"
               ><q-tooltip>Open in Nutstash</q-tooltip>Nutstash</q-btn
-            >            
+            >
             <br /><br />
             <h6 class="q-my-sm">Mint URL</h6>
             <q-input
-            outlined
-            readonly
-            :label="mintURL.base_url + '/cashu/api/v1/{% endraw %}{{mint_id}}{% raw %}'"
-            type="textarea"
-            autogrow
-            class="q-mb-xs"
-          ></q-input>
+              outlined
+              readonly
+              :label="mintURL.base_url + '/cashu/api/v1/{% endraw %}{{
+                mint_id
+              }}{% raw %}'"
+              type="textarea"
+              autogrow
+              class="q-mb-xs"
+            ></q-input>
             <p>
               <q-btn
                 outline
@@ -55,17 +61,21 @@
                 class="q-mt-md"
                 color="($q.dark.isActive) ? 'grey-7' : 'grey-5'"
                 label="Copy"
-                @click="copyText(mintURL.base_url + '/cashu/api/v1/{% endraw %}{{mint_id}}{% raw %}')"
+                @click="copyText(mintURL.base_url + '/cashu/api/v1/{% endraw %}{{
+                  mint_id
+                }}{% raw %}')"
               />
             </p>
           </center>
-            <q-card-section class="text-center">
-                <qrcode
-                  :value="mintURL.base_url + '/cashu/api/v1/{% endraw %}{{mint_id}}{% raw %}'"
-                  :options="{width:240}"
-                  class="rounded-borders"
-                ></qrcode>
-            </q-card-section>
+          <q-card-section class="text-center">
+            <qrcode
+              :value="mintURL.base_url + '/cashu/api/v1/{% endraw %}{{
+                mint_id
+              }}{% raw %}'"
+              :options="{width:240}"
+              class="rounded-borders"
+            ></qrcode>
+          </q-card-section>
         </q-card-section>
       </q-card>
       <q-card class="q-pa-lg q-mb-xl">
