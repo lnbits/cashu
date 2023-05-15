@@ -7,20 +7,16 @@ from .models import Cashu
 async def create_cashu(
     cashu_id: str, keyset_id: str, wallet_id: str, data: Cashu
 ) -> Cashu:
-
     await db.execute(
         """
-        INSERT INTO cashu.cashu (id, wallet, name, tickershort, fraction, maxsats, coins, keyset_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO cashu.cashu (id, wallet, name, maxsats, keyset_id)
+        VALUES (?, ?, ?, ?, ?)
         """,
         (
             cashu_id,
             wallet_id,
             data.name,
-            data.tickershort,
-            data.fraction,
             data.maxsats,
-            data.coins,
             keyset_id,
         ),
     )

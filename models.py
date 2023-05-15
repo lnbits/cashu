@@ -9,10 +9,7 @@ class Cashu(BaseModel):
     id: str = Query(None)
     name: str = Query(None)
     wallet: str = Query(None)
-    tickershort: str = Query(None)
-    fraction: bool = Query(None)
     maxsats: int = Query(0)
-    coins: int = Query(0)
     keyset_id: str = Query(None)
 
     @classmethod

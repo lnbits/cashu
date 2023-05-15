@@ -8,16 +8,17 @@
             <q-img
               src="/cashu/static/image/cashu.png"
               spinner-color="white"
-              style="max-width: 20%"
+              style="max-width: 20%; border-radius: 50%;"
             ></q-img>
             <h4 class="q-mt-sm q-mb-md">
-              Name: {% endraw %}{{ mint_name }}{% raw %}
+              {% endraw %}{{ mint_name }}{% raw %}
             </h4>
-            <h5 class="q-mb-md">Open mint in a wallet</h5>
+            <h6 class="q-mb-md">Open mint in a wallet</h6>
             <q-btn
               outline
               dense
               size="md"
+              class="q-px-sm q-py-xs"
               icon="account_balance_wallet"
               color="($q.dark.isActive) ? 'green-7' : 'green-5'"
               type="a"
@@ -28,6 +29,7 @@
             <q-btn
               outline
               dense
+              class="q-px-sm q-py-xs"
               size="md"
               icon="account_balance_wallet"
               color="($q.dark.isActive) ? 'yellow-7' : 'yellow-5'"
@@ -37,7 +39,7 @@
               ><q-tooltip>Open in Nutstash</q-tooltip>Nutstash</q-btn
             >            
             <br /><br />
-            <h5 class="q-my-sm">Copy mint URL</h5>
+            <h6 class="q-my-sm">Mint URL</h6>
             <q-input
             outlined
             readonly
@@ -57,6 +59,13 @@
               />
             </p>
           </center>
+            <q-card-section class="text-center">
+                <qrcode
+                  :value="mintURL.base_url + '/cashu/api/v1/{% endraw %}{{mint_id}}{% raw %}'"
+                  :options="{width:240}"
+                  class="rounded-borders"
+                ></qrcode>
+            </q-card-section>
         </q-card-section>
       </q-card>
       <q-card class="q-pa-lg q-mb-xl">
@@ -111,6 +120,7 @@
 {% endraw %} {% endblock %} {% block scripts %}
 
 <script>
+  Vue.component(VueQrcode.name, VueQrcode)
   new Vue({
     el: '#vue',
     mixins: [windowMixin],

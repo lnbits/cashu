@@ -4,19 +4,17 @@
   <div class="col-12 col-md-8 col-lg-7 q-gutter-y-md">
     <q-card>
       <q-card-section>
-        <b>Cashu mint</b>
-        <p></p>
+        <b>Cashu LNbits extension</b>
         <p>
           Create Cashu mints that can use your LNbits wallet as a funding
           source. Each Cashu mint can be used by as many people as you want.
-          There are different Cashu wallets that you can use with your mint.
-          Click on the icon at each mint to try different wallets.
+          You can use your mint with different Cashu wallets.
         </p>
-        <b>Important</b>
-        <p></p>
+        
         <p>
-          Cashu is still beta software and in its early stages. Use this Cashu
-          mint only with small amounts.
+          <b>Important</b>:
+          Cashu is still beta and experimental software. Use this Cashu
+          mint only with small amounts. Loss of funds is possible.
         </p>
       </q-card-section>
     </q-card>
@@ -76,7 +74,7 @@
                   :href="'https://wallet.nutstash.app?mint='+base_url+'/cashu/api/v1/' + props.row.id"
                   target="_blank"
                   ><q-tooltip>Open in Nutstash</q-tooltip>Nutstash</q-btn
-                >
+                >             
                 <q-btn
                   unelevated
                   dense
@@ -84,6 +82,7 @@
                   size="xs"
                   icon="account_balance"
                   :color="($q.dark.isActive) ? 'grey-7' : 'grey-5'"
+                  type="a"
                   :href="'mint/' + props.row.id"
                   target="_blank"
                   ><q-tooltip>Shareable mint page</q-tooltip>Mint</q-btn
@@ -381,12 +380,6 @@
           columns: [
             {name: 'id', align: 'left', label: 'Mint ID', field: 'id'},
             {name: 'name', align: 'left', label: 'Name', field: 'name'},
-            // {
-            //   name: 'tickershort',
-            //   align: 'left',
-            //   label: 'Ticker',
-            //   field: 'tickershort'
-            // },
             {
               name: 'wallet',
               align: 'left',
@@ -447,8 +440,6 @@
         }
         var data = {
           name: this.formDialog.data.name,
-          tickershort: this.formDialog.data.tickershort,
-          maxliquid: this.formDialog.data.maxliquid
         }
         var self = this
 
