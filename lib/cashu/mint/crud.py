@@ -14,37 +14,37 @@ class LedgerCrud:
     """
 
     async def get_keyset(*args, **kwags):
-        return await get_keyset(*args, **kwags)
+        return await get_keyset(*args, **kwags)  # type: ignore
 
     async def get_lightning_invoice(*args, **kwags):
-        return await get_lightning_invoice(*args, **kwags)
+        return await get_lightning_invoice(*args, **kwags)  # type: ignore
 
     async def get_proofs_used(*args, **kwags):
-        return await get_proofs_used(*args, **kwags)
+        return await get_proofs_used(*args, **kwags)  # type: ignore
 
     async def invalidate_proof(*args, **kwags):
-        return await invalidate_proof(*args, **kwags)
+        return await invalidate_proof(*args, **kwags)  # type: ignore
 
     async def get_proofs_pending(*args, **kwags):
-        return await get_proofs_pending(*args, **kwags)
+        return await get_proofs_pending(*args, **kwags)  # type: ignore
 
     async def set_proof_pending(*args, **kwags):
-        return await set_proof_pending(*args, **kwags)
+        return await set_proof_pending(*args, **kwags)  # type: ignore
 
     async def unset_proof_pending(*args, **kwags):
-        return await unset_proof_pending(*args, **kwags)
+        return await unset_proof_pending(*args, **kwags)  # type: ignore
 
     async def store_keyset(*args, **kwags):
-        return await store_keyset(*args, **kwags)
+        return await store_keyset(*args, **kwags)  # type: ignore
 
     async def store_lightning_invoice(*args, **kwags):
-        return await store_lightning_invoice(*args, **kwags)
+        return await store_lightning_invoice(*args, **kwags)  # type: ignore
 
     async def store_promise(*args, **kwags):
-        return await store_promise(*args, **kwags)
+        return await store_promise(*args, **kwags)  # type: ignore
 
     async def update_lightning_invoice(*args, **kwags):
-        return await update_lightning_invoice(*args, **kwags)
+        return await update_lightning_invoice(*args, **kwags)  # type: ignore
 
 
 async def store_promise(
@@ -154,14 +154,15 @@ async def store_lightning_invoice(
     await (conn or db).execute(
         f"""
         INSERT INTO {table_with_schema(db, 'invoices')}
-          (amount, pr, hash, issued)
-        VALUES (?, ?, ?, ?)
+          (amount, pr, hash, issued, payment_hash)
+        VALUES (?, ?, ?, ?, ?)
         """,
         (
             invoice.amount,
             invoice.pr,
             invoice.hash,
             invoice.issued,
+            invoice.payment_hash,
         ),
     )
 
@@ -178,6 +179,7 @@ async def get_lightning_invoice(
         """,
         (hash,),
     )
+
     return Invoice(**row) if row else None
 
 
@@ -221,7 +223,7 @@ async def store_keyset(
 
 async def get_keyset(
     db: Database,
-    id: str = None,
+    id: str = "",
     derivation_path: str = "",
     conn: Optional[Connection] = None,
 ):
