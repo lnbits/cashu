@@ -36,6 +36,7 @@ from .lib.cashu.core.base import (
     PostSplitRequest,
     PostSplitResponse,
 )
+from .lib.cashu.core.db import lock_table
 from .models import Cashu
 
 # --------- extension imports
@@ -80,10 +81,11 @@ async def api_cashu_create(
     Create a new mint for this wallet.
     """
     cashu_id = urlsafe_short_hash()
-    
+
     # generate a new keyset in cashu
     keyset_derivation_path = urlsafe_short_hash()
     keyset = await ledger.load_keyset(derivation_path=keyset_derivation_path)
+    assert keyset.id
 
     cashu = await create_cashu(
         cashu_id=cashu_id, keyset_id=keyset.id, wallet_id=wallet.wallet.id, data=data
@@ -225,24 +227,24 @@ async def mint(
     keyset = ledger.keysets.keysets[cashu.keyset_id]
 
     if LIGHTNING:
-        invoice: Invoice = await ledger.crud.get_lightning_invoice(
-            db=ledger.db, hash=payment_hash
-        )
-        if invoice is None:
-            raise HTTPException(
-                status_code=HTTPStatus.NOT_FOUND,
-                detail="Mint does not know this invoice.",
+        async with ledger.db.connect() as conn:
+            invoice = await ledger.crud.get_lightning_invoice(
+                db=ledger.db, hash=payment_hash, conn=conn
             )
-        if invoice.issued:
-            raise HTTPException(
-                status_code=HTTPStatus.PAYMENT_REQUIRED,
-                detail="Tokens already issued for this invoice.",
+            if invoice is None:
+                raise HTTPException(
+                    status_code=HTTPStatus.NOT_FOUND,
+                    detail="Mint does not know this invoice.",
+                )
+            if invoice.issued:
+                raise HTTPException(
+                    status_code=HTTPStatus.PAYMENT_REQUIRED,
+                    detail="Tokens already issued for this invoice.",
+                )
+            # set this invoice as issued
+            await ledger.crud.update_lightning_invoice(
+                db=ledger.db, hash=payment_hash, issued=True, conn=conn
             )
-
-        # set this invoice as issued
-        await ledger.crud.update_lightning_invoice(
-            db=ledger.db, hash=payment_hash, issued=True
-        )
 
         status: PaymentStatus = await check_transaction_status(
             cashu.wallet, payment_hash
@@ -302,7 +304,14 @@ async def melt_coins(
     )
 
     # set proofs as pending
-    await ledger._set_proofs_pending(proofs)
+    async with ledger.db.connect() as conn:
+        logger.trace("trying to lock table proofs_pending")
+        await conn.execute(lock_table(ledger.db, "proofs_pending"))
+        logger.trace("locked table proofs_pending")
+        # validate and set proofs as pending
+        logger.trace("setting proofs pending")
+        await ledger._set_proofs_pending(proofs, conn)
+        logger.trace(f"set proofs as pending")
 
     try:
         await ledger._verify_proofs(proofs)
@@ -325,7 +334,7 @@ async def melt_coins(
             await pay_invoice(
                 wallet_id=cashu.wallet,
                 payment_request=invoice,
-                description="Pay cashu invoice",
+                description="Pay Cashu invoice",
                 extra={"tag": "cashu", "cashu_name": cashu.name},
             )
             logger.debug(
@@ -364,7 +373,13 @@ async def melt_coins(
     finally:
         logger.debug("Cashu: Unset pending")
         # delete proofs from pending list
-        await ledger._unset_proofs_pending(proofs)
+        async with ledger.db.connect() as conn:
+            logger.trace("trying to lock table proofs_pending")
+            await conn.execute(lock_table(ledger.db, "proofs_pending"))
+            logger.trace("locked table proofs_pending")
+            logger.trace("unsetting proofs as pending")
+            await ledger._unset_proofs_pending(proofs, conn)
+            logger.trace(f"unset proofs as pending")
 
     return GetMeltResponse(
         paid=status.paid, preimage=status.preimage, change=return_promises
