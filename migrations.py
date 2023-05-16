@@ -33,17 +33,17 @@ async def m001_initial(db):
     )
 
 
-async def m002_add_mint_settings(db):
-    """
-    Add mint options.
-    """
-    await db.execute("ALTER TABLE cashu.cashu ADD COLUMN max_mint INT;")
-    await db.execute("ALTER TABLE cashu.cashu ADD COLUMN redeemed_sat INT;")
-    await db.execute(
-        "ALTER TABLE cashu.cashu ADD COLUMN peg_out_only BOOL DEFAULT false;"
-    )
-    await db.execute("ALTER TABLE cashu.cashu ADD COLUMN mint_information TEXT;")
-    # delete tables tickershort, fraction, coins
-    await db.execute("ALTER TABLE cashu.cashu DROP COLUMN tickershort;")
-    await db.execute("ALTER TABLE cashu.cashu DROP COLUMN fraction;")
-    await db.execute("ALTER TABLE cashu.cashu DROP COLUMN coins;")
+# async def m002_add_mint_settings(db):
+#     """
+#     Add mint options.
+#     """
+#     await db.execute("ALTER TABLE cashu.cashu ADD COLUMN max_mint INT;")
+#     await db.execute("ALTER TABLE cashu.cashu ADD COLUMN redeemed_sat INT;")
+#     await db.execute(
+#         "ALTER TABLE cashu.cashu ADD COLUMN peg_out_only BOOL DEFAULT false;"
+#     )
+#     await db.execute("ALTER TABLE cashu.cashu ADD COLUMN mint_information TEXT;")
+#     # delete tables tickershort, fraction, coins
+#     await db.execute("ALTER TABLE cashu.cashu DROP COLUMN tickershort;")
+#     await db.execute("ALTER TABLE cashu.cashu DROP COLUMN fraction;")
+#     await db.execute("ALTER TABLE cashu.cashu DROP COLUMN coins;")
