@@ -18,8 +18,8 @@ cashu_static_files = [
         "name": "cashu_static",
     }
 ]
-from .lib.cashu.mint.ledger import Ledger
 from .lib.cashu.lightning.base import Wallet
+from .lib.cashu.mint.ledger import Ledger
 
 env = Env()
 env.read_env()

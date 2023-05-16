@@ -2,21 +2,6 @@ import math
 from http import HTTPStatus
 from typing import Dict, Union
 
-# -------- cashu imports
-from .lib.cashu.core.base import (
-    CheckFeesRequest,
-    CheckFeesResponse,
-    CheckSpendableRequest,
-    CheckSpendableResponse,
-    GetMeltResponse,
-    GetMintResponse,
-    Invoice,
-    PostMeltRequest,
-    PostMintRequest,
-    PostMintResponse,
-    PostSplitRequest,
-    PostSplitResponse,
-)
 from fastapi import Depends, Query
 from loguru import logger
 from starlette.exceptions import HTTPException
@@ -35,6 +20,23 @@ from lnbits.wallets.base import PaymentStatus
 
 from . import cashu_ext, ledger
 from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
+
+# -------- cashu imports
+from .lib.cashu.core.base import (
+    CheckFeesRequest,
+    CheckFeesResponse,
+    CheckSpendableRequest,
+    CheckSpendableResponse,
+    GetMeltResponse,
+    GetMintResponse,
+    Invoice,
+    PostMeltRequest,
+    PostMintRequest,
+    PostMintResponse,
+    PostSplitRequest,
+    PostSplitResponse,
+)
+from .lib.cashu.core.db import lock_table
 from .models import Cashu
 
 # --------- extension imports
@@ -79,13 +81,16 @@ async def api_cashu_create(
     Create a new mint for this wallet.
     """
     cashu_id = urlsafe_short_hash()
+
     # generate a new keyset in cashu
-    keyset = await ledger.load_keyset(cashu_id)
+    keyset_derivation_path = urlsafe_short_hash()
+    keyset = await ledger.load_keyset(derivation_path=keyset_derivation_path)
+    assert keyset.id
 
     cashu = await create_cashu(
         cashu_id=cashu_id, keyset_id=keyset.id, wallet_id=wallet.wallet.id, data=data
     )
-    logger.debug(cashu)
+    logger.debug(f"Cashu mint created: {cashu_id}")
     return cashu.dict()
 
 
@@ -207,6 +212,7 @@ async def request_mint(cashu_id: str = Query(None), amount: int = 0) -> GetMintR
 async def mint(
     data: PostMintRequest,
     cashu_id: str = Query(None),
+    hash: str = Query(None),
     payment_hash: str = Query(None),
 ) -> PostMintResponse:
     """
@@ -218,28 +224,32 @@ async def mint(
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
+    # BEGIN: backwards compatibility < 0.12 where we used to lookup payments with payment_hash
+    # We use the payment_hash to lookup the hash from the database and pass that one along.
+    hash = payment_hash or hash
+    # END: backwards compatibility < 0.12
 
     keyset = ledger.keysets.keysets[cashu.keyset_id]
 
     if LIGHTNING:
-        invoice: Invoice = await ledger.crud.get_lightning_invoice(
-            db=ledger.db, hash=payment_hash
-        )
-        if invoice is None:
-            raise HTTPException(
-                status_code=HTTPStatus.NOT_FOUND,
-                detail="Mint does not know this invoice.",
+        async with ledger.db.connect() as conn:
+            invoice = await ledger.crud.get_lightning_invoice(
+                db=ledger.db, hash=payment_hash, conn=conn
             )
-        if invoice.issued:
-            raise HTTPException(
-                status_code=HTTPStatus.PAYMENT_REQUIRED,
-                detail="Tokens already issued for this invoice.",
+            if invoice is None:
+                raise HTTPException(
+                    status_code=HTTPStatus.NOT_FOUND,
+                    detail="Mint does not know this invoice.",
+                )
+            if invoice.issued:
+                raise HTTPException(
+                    status_code=HTTPStatus.PAYMENT_REQUIRED,
+                    detail="Tokens already issued for this invoice.",
+                )
+            # set this invoice as issued
+            await ledger.crud.update_lightning_invoice(
+                db=ledger.db, hash=payment_hash, issued=True, conn=conn
             )
-
-        # set this invoice as issued
-        await ledger.crud.update_lightning_invoice(
-            db=ledger.db, hash=payment_hash, issued=True
-        )
 
         status: PaymentStatus = await check_transaction_status(
             cashu.wallet, payment_hash
@@ -299,7 +309,14 @@ async def melt_coins(
     )
 
     # set proofs as pending
-    await ledger._set_proofs_pending(proofs)
+    async with ledger.db.connect() as conn:
+        logger.trace("trying to lock table proofs_pending")
+        await conn.execute(lock_table(ledger.db, "proofs_pending"))
+        logger.trace("locked table proofs_pending")
+        # validate and set proofs as pending
+        logger.trace("setting proofs pending")
+        await ledger._set_proofs_pending(proofs, conn)
+        logger.trace(f"set proofs as pending")
 
     try:
         await ledger._verify_proofs(proofs)
@@ -322,7 +339,7 @@ async def melt_coins(
             await pay_invoice(
                 wallet_id=cashu.wallet,
                 payment_request=invoice,
-                description="Pay cashu invoice",
+                description="Pay Cashu invoice",
                 extra={"tag": "cashu", "cashu_name": cashu.name},
             )
             logger.debug(
@@ -339,11 +356,13 @@ async def melt_coins(
                 await ledger._invalidate_proofs(proofs)
                 # prepare change to compensate wallet for overpaid fees
                 if status.fee_msat is not None and payload.outputs:
+                    keyset = ledger.keysets.keysets[cashu.keyset_id]
                     return_promises = await ledger._generate_change_promises(
                         total_provided=total_provided,
                         invoice_amount=amount,
                         ln_fee_msat=status.fee_msat,
                         outputs=payload.outputs,
+                        keyset=keyset,
                     )
             else:
                 raise Exception(f"Cashu: Payment failed for {invoice_obj.payment_hash}")
@@ -359,7 +378,13 @@ async def melt_coins(
     finally:
         logger.debug("Cashu: Unset pending")
         # delete proofs from pending list
-        await ledger._unset_proofs_pending(proofs)
+        async with ledger.db.connect() as conn:
+            logger.trace("trying to lock table proofs_pending")
+            await conn.execute(lock_table(ledger.db, "proofs_pending"))
+            logger.trace("locked table proofs_pending")
+            logger.trace("unsetting proofs as pending")
+            await ledger._unset_proofs_pending(proofs, conn)
+            logger.trace(f"unset proofs as pending")
 
     return GetMeltResponse(
         paid=status.paid, preimage=status.preimage, change=return_promises

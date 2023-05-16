@@ -1,12 +1,11 @@
 import asyncio
 
-from .lib.cashu.core.migrations import migrate_databases
-from .lib.cashu.mint import migrations
-
 from lnbits.core.models import Payment
 from lnbits.tasks import register_invoice_listener
 
 from . import db, ledger
+from .lib.cashu.core.migrations import migrate_databases
+from .lib.cashu.mint import migrations
 
 
 async def startup_cashu_mint():
