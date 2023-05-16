@@ -305,7 +305,7 @@ class Ledger:
             checking_id,
             payment_request,
             error_message,
-        ) = await self.lightning.create_invoice(amount, "cashu deposit")
+        ) = await self.lightning.create_invoice(amount, "Cashu deposit")
         logger.trace(
             f"_request_lightning_invoice: Lightning invoice: {payment_request}"
         )
@@ -692,6 +692,7 @@ class Ledger:
             logger.trace("setting proofs pending")
             await self._set_proofs_pending(proofs, conn)
             logger.trace(f"set proofs as pending")
+        logger.trace("unlocked table proofs_pending")
 
         try:
             await self._verify_proofs(proofs)
@@ -754,6 +755,7 @@ class Ledger:
                 logger.trace("unsetting proofs as pending")
                 await self._unset_proofs_pending(proofs, conn)
                 logger.trace(f"unset proofs as pending")
+            logger.trace("unlocked table proofs_pending")
 
         return status, preimage, return_promises
 
