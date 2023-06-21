@@ -123,7 +123,7 @@ async def api_cashu_delete(
 
 
 @cashu_ext.get("/api/v1/{cashu_id}/keys", status_code=HTTPStatus.OK)
-async def keys(cashu_id: str = Query(None)) -> dict[int, str]:
+async def keys(cashu_id: str) -> dict[int, str]:
     """Get the public keys of the mint"""
     cashu: Union[Cashu, None] = await get_cashu(cashu_id)
 
@@ -137,7 +137,7 @@ async def keys(cashu_id: str = Query(None)) -> dict[int, str]:
 
 @cashu_ext.get("/api/v1/{cashu_id}/keys/{idBase64Urlsafe}")
 async def keyset_keys(
-    cashu_id: str = Query(None), idBase64Urlsafe: str = Query(None)
+    cashu_id: str, idBase64Urlsafe: str
 ) -> dict[int, str]:
     """
     Get the public keys of the mint of a specificy keyset id.
@@ -158,7 +158,7 @@ async def keyset_keys(
 
 
 @cashu_ext.get("/api/v1/{cashu_id}/keysets", status_code=HTTPStatus.OK)
-async def keysets(cashu_id: str = Query(None)) -> dict[str, list[str]]:
+async def keysets(cashu_id: str) -> dict[str, list[str]]:
     """Get the public keys of the mint"""
     cashu: Union[Cashu, None] = await get_cashu(cashu_id)
 
@@ -171,7 +171,7 @@ async def keysets(cashu_id: str = Query(None)) -> dict[str, list[str]]:
 
 
 @cashu_ext.get("/api/v1/{cashu_id}/mint")
-async def request_mint(cashu_id: str = Query(None), amount: int = 0) -> GetMintResponse:
+async def request_mint(cashu_id: str, amount: int = 0) -> GetMintResponse:
     """
     Request minting of new tokens. The mint responds with a Lightning invoice.
     This endpoint can be used for a Lightning invoice UX flow.
@@ -211,7 +211,7 @@ async def request_mint(cashu_id: str = Query(None), amount: int = 0) -> GetMintR
 @cashu_ext.post("/api/v1/{cashu_id}/mint")
 async def mint(
     data: PostMintRequest,
-    cashu_id: str = Query(None),
+    cashu_id: str,
     hash: str = Query(None),
     payment_hash: str = Query(None),
 ) -> PostMintResponse:
@@ -289,7 +289,7 @@ async def mint(
 
 @cashu_ext.post("/api/v1/{cashu_id}/melt")
 async def melt_coins(
-    payload: PostMeltRequest, cashu_id: str = Query(None)
+    payload: PostMeltRequest, cashu_id: str
 ) -> GetMeltResponse:
     """Invalidates proofs and pays a Lightning invoice."""
     cashu: Union[None, Cashu] = await get_cashu(cashu_id)
@@ -393,7 +393,7 @@ async def melt_coins(
 
 @cashu_ext.post("/api/v1/{cashu_id}/check")
 async def check_spendable(
-    payload: CheckSpendableRequest, cashu_id: str = Query(None)
+    payload: CheckSpendableRequest, cashu_id: str
 ) -> CheckSpendableResponse:
     """Check whether a secret has been spent already or not."""
     cashu: Union[None, Cashu] = await get_cashu(cashu_id)
@@ -407,7 +407,7 @@ async def check_spendable(
 
 @cashu_ext.post("/api/v1/{cashu_id}/checkfees")
 async def check_fees(
-    payload: CheckFeesRequest, cashu_id: str = Query(None)
+    payload: CheckFeesRequest, cashu_id: str
 ) -> CheckFeesResponse:
     """
     Responds with the fees necessary to pay a Lightning invoice.
@@ -431,7 +431,7 @@ async def check_fees(
 
 @cashu_ext.post("/api/v1/{cashu_id}/split")
 async def split(
-    payload: PostSplitRequest, cashu_id: str = Query(None)
+    payload: PostSplitRequest, cashu_id: str
 ) -> PostSplitResponse:
     """
     Requetst a set of tokens with amount "total" to be split into two
