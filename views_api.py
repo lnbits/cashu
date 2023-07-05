@@ -1,4 +1,5 @@
 import math
+import asyncio
 from http import HTTPStatus
 from typing import Dict, Union
 
@@ -232,10 +233,11 @@ async def mint(
     keyset = ledger.keysets.keysets[cashu.keyset_id]
 
     if LIGHTNING:
-        async with ledger.db.connect() as conn:
-            invoice = await ledger.crud.get_lightning_invoice(
-                db=ledger.db, hash=payment_hash, conn=conn
-            )
+        ledger.locks[hash] = (
+            ledger.locks.get(hash) or asyncio.Lock()
+        )  # create a new lock if it doesn't exist
+        async with ledger.locks[hash]:
+            invoice = await ledger.crud.get_lightning_invoice(db=ledger.db, hash=hash)
             if invoice is None:
                 raise HTTPException(
                     status_code=HTTPStatus.NOT_FOUND,
@@ -248,14 +250,12 @@ async def mint(
                 )
             # set this invoice as issued
             await ledger.crud.update_lightning_invoice(
-                db=ledger.db, hash=payment_hash, issued=True, conn=conn
+                db=ledger.db, hash=hash, issued=True
             )
-
-        status: PaymentStatus = await check_transaction_status(
-            cashu.wallet, payment_hash
-        )
+        del ledger.locks[hash]
 
         try:
+            status: PaymentStatus = await check_transaction_status(cashu.wallet, hash)
             total_requested = sum([bm.amount for bm in data.outputs])
             if total_requested > invoice.amount:
                 raise HTTPException(
@@ -274,7 +274,7 @@ async def mint(
             logger.debug(f"Cashu: /mint {str(e) or getattr(e, 'detail')}")
             # unset issued flag because something went wrong
             await ledger.crud.update_lightning_invoice(
-                db=ledger.db, hash=payment_hash, issued=False
+                db=ledger.db, hash=hash, issued=False
             )
             raise HTTPException(
                 status_code=getattr(e, "status_code")
@@ -309,15 +309,7 @@ async def melt_coins(
     )
 
     # set proofs as pending
-    async with ledger.db.connect() as conn:
-        logger.trace("trying to lock table proofs_pending")
-        await conn.execute(lock_table(ledger.db, "proofs_pending"))
-        logger.trace("locked table proofs_pending")
-        # validate and set proofs as pending
-        logger.trace("setting proofs pending")
-        await ledger._set_proofs_pending(proofs, conn)
-        logger.trace(f"set proofs as pending")
-
+    await ledger._set_proofs_pending(proofs)
     try:
         await ledger._verify_proofs(proofs)
 
@@ -376,15 +368,8 @@ async def melt_coins(
             detail=f"Cashu: {str(e)}",
         )
     finally:
-        logger.debug("Cashu: Unset pending")
         # delete proofs from pending list
-        async with ledger.db.connect() as conn:
-            logger.trace("trying to lock table proofs_pending")
-            await conn.execute(lock_table(ledger.db, "proofs_pending"))
-            logger.trace("locked table proofs_pending")
-            logger.trace("unsetting proofs as pending")
-            await ledger._unset_proofs_pending(proofs, conn)
-            logger.trace(f"unset proofs as pending")
+        await ledger._unset_proofs_pending(proofs)
 
     return GetMeltResponse(
         paid=status.paid, preimage=status.preimage, change=return_promises
