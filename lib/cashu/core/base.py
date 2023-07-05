@@ -1,5 +1,6 @@
 import base64
 import json
+from sqlite3 import Row
 from typing import Any, Dict, List, Optional, Union
 
 from loguru import logger
@@ -8,13 +9,62 @@ from pydantic import BaseModel
 from .crypto.keys import derive_keys, derive_keyset_id, derive_pubkeys
 from .crypto.secp import PrivateKey, PublicKey
 from .legacy import derive_keys_backwards_compatible_insecure_pre_0_12
+from .p2pk import sign_p2pk_sign
 
 # ------- PROOFS -------
 
 
+class SecretKind:
+    P2SH = "P2SH"
+    P2PK = "P2PK"
+
+
+class Tags(BaseModel):
+    __root__: List[List[str]]
+
+    def get_tag(self, tag_name: str) -> Union[str, None]:
+        for tag in self.__root__:
+            if tag[0] == tag_name:
+                return tag[1]
+        return None
+
+
+class Secret(BaseModel):
+    """Describes spending condition encoded in the secret field of a Proof."""
+
+    kind: str
+    data: str
+    nonce: Union[None, str] = None
+    timelock: Union[None, int] = None
+    tags: Union[None, Tags] = None
+
+    def serialize(self) -> str:
+        data_dict: Dict[str, Any] = {
+            "data": self.data,
+            "nonce": self.nonce or PrivateKey().serialize()[:32],
+        }
+        if self.timelock:
+            data_dict["timelock"] = self.timelock
+        if self.tags:
+            data_dict["tags"] = self.tags.__root__
+        logger.debug(
+            json.dumps(
+                [self.kind, data_dict],
+            )
+        )
+        return json.dumps(
+            [self.kind, data_dict],
+        )
+
+    @classmethod
+    def deserialize(cls, data: str):
+        kind, kwargs = json.loads(data)
+        return cls(kind=kind, **kwargs)
+
+
 class P2SHScript(BaseModel):
     """
-    Describes spending condition of a Proof
+    Unlocks P2SH spending condition of a Proof
     """
 
     script: str
@@ -33,7 +83,8 @@ class Proof(BaseModel):
     amount: int = 0
     secret: str = ""  # secret or message to be blinded and signed
     C: str = ""  # signature on secret, unblinded by wallet
-    script: Union[P2SHScript, None] = None  # P2SH spending condition
+    p2pksig: Optional[str] = None  # P2PK signature
+    p2shscript: Union[P2SHScript, None] = None  # P2SH spending condition
     reserved: Union[
         None, bool
     ] = False  # whether this proof is reserved for sending, used for coin management in the wallet
@@ -173,6 +224,19 @@ class PostSplitRequest(BaseModel):
     proofs: List[Proof]
     amount: int
     outputs: List[BlindedMessage]
+    # signature: Optional[str] = None
+
+    # def sign(self, private_key: PrivateKey):
+    #     """
+    #     Create a signed split request. The signature is over the `proofs` and `outputs` fields.
+    #     """
+    #     # message = json.dumps(self.proofs).encode("utf-8") + json.dumps(
+    #     #     self.outputs
+    #     # ).encode("utf-8")
+    #     message = json.dumps(self.dict(include={"proofs": ..., "outputs": ...})).encode(
+    #         "utf-8"
+    #     )
+    #     self.signature = sign_p2pk_sign(message, private_key)
 
 
 class PostSplitResponse(BaseModel):
@@ -217,8 +281,8 @@ class WalletKeyset:
     Contains the keyset from the wallets's perspective.
     """
 
-    id: Union[str, None]
-    public_keys: Union[Dict[int, PublicKey], None]
+    id: str
+    public_keys: Dict[int, PublicKey]
     mint_url: Union[str, None] = None
     valid_from: Union[str, None] = None
     valid_to: Union[str, None] = None
@@ -227,25 +291,48 @@ class WalletKeyset:
 
     def __init__(
         self,
-        public_keys=None,
-        mint_url=None,
+        public_keys: Dict[int, PublicKey],
         id=None,
+        mint_url=None,
         valid_from=None,
         valid_to=None,
         first_seen=None,
         active=None,
     ):
-        self.id = id
         self.valid_from = valid_from
         self.valid_to = valid_to
         self.first_seen = first_seen
         self.active = active
         self.mint_url = mint_url
-        if public_keys:
-            self.public_keys = public_keys
-            self.id = derive_keyset_id(self.public_keys)
-        if id:
-            assert id == self.id, "id must match derived id from public keys"
+
+        self.public_keys = public_keys
+        # overwrite id by deriving it from the public keys
+        self.id = derive_keyset_id(self.public_keys)
+
+    def serialize(self):
+        return json.dumps(
+            {amount: key.serialize().hex() for amount, key in self.public_keys.items()}
+        )
+
+    @classmethod
+    def from_row(cls, row: Row):
+        def deserialize(serialized: str):
+            return {
+                amount: PublicKey(bytes.fromhex(hex_key), raw=True)
+                for amount, hex_key in dict(json.loads(serialized)).items()
+            }
+
+        return cls(
+            id=row["id"],
+            public_keys=deserialize(str(row["public_keys"]))
+            if dict(row).get("public_keys")
+            else {},
+            mint_url=row["mint_url"],
+            valid_from=row["valid_from"],
+            valid_to=row["valid_to"],
+            first_seen=row["first_seen"],
+            active=row["active"],
+        )
 
 
 class MintKeyset:
