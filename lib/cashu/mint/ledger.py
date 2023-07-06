@@ -1,4 +1,7 @@
+import asyncio
+import json
 import math
+import time
 from typing import Dict, List, Literal, Optional, Set, Union
 
 from loguru import logger
@@ -11,13 +14,16 @@ from ..core.base import (
     MintKeyset,
     MintKeysets,
     Proof,
+    Secret,
+    SecretKind,
 )
 from ..core.crypto import b_dhke
 from ..core.crypto.keys import derive_pubkey, random_hash
 from ..core.crypto.secp import PublicKey
-from ..core.db import Connection, Database, lock_table
+from ..core.db import Connection, Database
 from ..core.helpers import fee_reserve, sum_proofs
-from ..core.script import verify_script
+from ..core.p2pk import verify_p2pk_signature
+from ..core.script import verify_bitcoin_script
 from ..core.settings import settings
 from ..core.split import amount_split
 from ..lightning.base import Wallet
@@ -25,6 +31,11 @@ from ..mint.crud import LedgerCrud
 
 
 class Ledger:
+    locks: Dict[str, asyncio.Lock] = {}  # holds multiprocessing locks
+    proofs_pending_lock: asyncio.Lock = (
+        asyncio.Lock()
+    )  # holds locks for proofs_pending database
+
     def __init__(
         self,
         db: Database,
@@ -179,7 +190,7 @@ class Ledger:
         """Verifies that a secret is present and is not too long (DOS prevention)."""
         if proof.secret is None or proof.secret == "":
             raise Exception("no secret in proof.")
-        if len(proof.secret) > 64:
+        if len(proof.secret) > 512:
             raise Exception("secret too long.")
         return True
 
@@ -191,6 +202,7 @@ class Ledger:
         if not proof.id:
             private_key_amount = self.keyset.private_keys[proof.amount]
         else:
+            assert proof.id in self.keysets.keysets, f"keyset {proof.id} unknown"
             logger.trace(
                 f"Validating proof with keyset {self.keysets.keysets[proof.id].id}."
             )
@@ -202,35 +214,90 @@ class Ledger:
         C = PublicKey(bytes.fromhex(proof.C), raw=True)
         return b_dhke.verify(private_key_amount, C, proof.secret)
 
-    def _verify_script(self, idx: int, proof: Proof) -> bool:
+    def _verify_spending_conditions(self, proof: Proof) -> bool:
         """
-        Verify bitcoin script in proof.script commited to by <address> in proof.secret.
-        proof.secret format: P2SH:<address>:<secret>
+        Verify spending conditions:
+         Condition: P2SH - Witnesses proof.p2shscript
+         Condition: P2PK - Witness: proof.p2pksig
+
         """
-        # if no script is given
-        if (
-            proof.script is None
-            or proof.script.script is None
-            or proof.script.signature is None
-        ):
-            if len(proof.secret.split("P2SH:")) == 2:
-                # secret indicates a script but no script is present
-                return False
-            else:
-                # secret indicates no script, so treat script as valid
+        # P2SH
+        try:
+            secret = Secret.deserialize(proof.secret)
+        except Exception as e:
+            # secret is not a spending condition so we treat is a normal secret
+            return True
+        if secret.kind == SecretKind.P2SH:
+            # check if timelock is in the past
+            now = time.time()
+            if secret.timelock and secret.timelock < now:
+                logger.trace(f"p2sh timelock ran out ({secret.timelock}<{now}).")
                 return True
-        # execute and verify P2SH
-        txin_p2sh_address, valid = verify_script(
-            proof.script.script, proof.script.signature
-        )
-        if valid:
+            logger.trace(f"p2sh timelock still active ({secret.timelock}>{now}).")
+
+            if (
+                proof.p2shscript is None
+                or proof.p2shscript.script is None
+                or proof.p2shscript.signature is None
+            ):
+                # no script present although secret indicates one
+                raise Exception("no script in proof.")
+
+            # execute and verify P2SH
+            txin_p2sh_address, valid = verify_bitcoin_script(
+                proof.p2shscript.script, proof.p2shscript.signature
+            )
+            if not valid:
+                raise Exception("script invalid.")
             # check if secret commits to script address
-            # format: P2SH:<address>:<secret>
-            assert len(proof.secret.split(":")) == 3, "secret format wrong."
-            assert proof.secret.split(":")[1] == str(
+            assert secret.data == str(
                 txin_p2sh_address
-            ), f"secret does not contain correct P2SH address: {proof.secret.split(':')[1]} is not {txin_p2sh_address}."
-        return valid
+            ), f"secret does not contain correct P2SH address: {secret.data} is not {txin_p2sh_address}."
+            return True
+
+        # P2PK
+        if secret.kind == SecretKind.P2PK:
+            # check if timelock is in the past
+            now = time.time()
+            if secret.timelock and secret.timelock < now:
+                logger.trace(f"p2pk timelock ran out ({secret.timelock}<{now}).")
+                # check tags if a refund pubkey is present.
+                # If yes, we demand the signature to be from the refund pubkey
+                if secret.tags and secret.tags.get_tag("refund"):
+                    signature_pubkey = secret.tags.get_tag("refund")
+                else:
+                    # if no refund pubkey is present and the timelock has expired
+                    # the token can be spent by anyone
+                    return True
+            else:
+                # the timelock is still active, therefore we demand the signature
+                # to be from the pubkey in the data field
+                signature_pubkey = secret.data
+            logger.trace(f"p2pk timelock still active ({secret.timelock}>{now}).")
+
+            # now we check the signature
+            if not proof.p2pksig:
+                # no signature present although secret indicates one
+                raise Exception("no p2pk signature in proof.")
+
+            # we parse the secret as a P2PK commitment
+            # assert len(proof.secret.split(":")) == 5, "p2pk secret format invalid."
+
+            # check signature proof.p2pksig against pubkey
+            # we expect the signature to be on the pubkey (=message) itself
+            assert signature_pubkey, "no signature pubkey present."
+            assert verify_p2pk_signature(
+                message=secret.serialize().encode("utf-8"),
+                pubkey=PublicKey(bytes.fromhex(signature_pubkey), raw=True),
+                signature=bytes.fromhex(proof.p2pksig),
+            ), "p2pk signature invalid."
+            logger.trace(proof.p2pksig)
+            logger.trace("p2pk signature valid.")
+
+            return True
+
+        # no spending contition
+        return True
 
     def _verify_outputs(
         self, total: int, amount: int, outputs: List[BlindedMessage]
@@ -432,18 +499,19 @@ class Ledger:
             Exception: At least one proof already in pending table.
         """
         # first we check whether these proofs are pending aready
-        await self._validate_proofs_pending(proofs, conn)
-        for p in proofs:
-            try:
-                logger.trace(
-                    f"crud: _set_proofs_pending setting proof {p.secret} as pending"
-                )
-                await self.crud.set_proof_pending(proof=p, db=self.db, conn=conn)
-                logger.trace(
-                    f"crud: _set_proofs_pending proof {p.secret} set as pending"
-                )
-            except:
-                raise Exception("proofs already pending.")
+        async with self.proofs_pending_lock:
+            await self._validate_proofs_pending(proofs, conn)
+            for p in proofs:
+                try:
+                    logger.trace(
+                        f"crud: _set_proofs_pending setting proof {p.secret} as pending"
+                    )
+                    await self.crud.set_proof_pending(proof=p, db=self.db, conn=conn)
+                    logger.trace(
+                        f"crud: _set_proofs_pending proof {p.secret} set as pending"
+                    )
+                except:
+                    raise Exception("proofs already pending.")
 
     async def _unset_proofs_pending(
         self, proofs: List[Proof], conn: Optional[Connection] = None
@@ -455,20 +523,23 @@ class Ledger:
         """
         # we try: except: this block in order to avoid that any errors here
         # could block the _invalidate_proofs() call that happens afterwards.
-        try:
-            for p in proofs:
-                logger.trace(
-                    f"crud: _unset_proofs_pending unsetting proof {p.secret} as pending"
-                )
-                await self.crud.unset_proof_pending(proof=p, db=self.db, conn=conn)
-                logger.trace(
-                    f"crud: _unset_proofs_pending proof {p.secret} unset as pending"
-                )
-        except Exception as e:
-            print(e)
-            pass
+        async with self.proofs_pending_lock:
+            try:
+                for p in proofs:
+                    logger.trace(
+                        f"crud: _unset_proofs_pending unsetting proof {p.secret} as pending"
+                    )
+                    await self.crud.unset_proof_pending(proof=p, db=self.db, conn=conn)
+                    logger.trace(
+                        f"crud: _unset_proofs_pending proof {p.secret} unset as pending"
+                    )
+            except Exception as e:
+                print(e)
+                pass
 
-    async def _validate_proofs_pending(self, proofs: List[Proof], conn):
+    async def _validate_proofs_pending(
+        self, proofs: List[Proof], conn: Optional[Connection] = None
+    ):
         """Checks if any of the provided proofs is in the pending proofs table.
 
         Args:
@@ -498,7 +569,7 @@ class Ledger:
             Exception: BDHKE verification failed.
         """
         # Verify scripts
-        if not all([self._verify_script(i, p) for i, p in enumerate(proofs)]):
+        if not all([self._verify_spending_conditions(p) for p in proofs]):
             raise Exception("script validation failed.")
         # Verify secret criteria
         if not all([self._verify_secret_criteria(p) for p in proofs]):
@@ -515,7 +586,7 @@ class Ledger:
         total_provided: int,
         invoice_amount: int,
         ln_fee_msat: int,
-        outputs: List[BlindedMessage],
+        outputs: Optional[List[BlindedMessage]],
         keyset: Optional[MintKeyset] = None,
     ):
         """Generates a set of new promises (blinded signatures) from a set of blank outputs
@@ -523,15 +594,15 @@ class Ledger:
         fee reserve provided by the wallet and the actual Lightning fee paid by the mint.
 
         If there is a positive difference, produces maximum `n_return_outputs` new outputs
-        with values close or equal to the fee difference. We can't be sure that we hit the
-        fee perfectly because we can only work with a limited set of blanket outputs and
-        their values are limited to 2^n.
+        with values close or equal to the fee difference. If the given number of `outputs` matches
+        the equation defined in NUT-08, we can be sure to return the overpaid fee perfectly.
+        Otherwise, a smaller amount will be returned.
 
         Args:
             total_provided (int): Amount of the proofs provided by the wallet.
             invoice_amount (int): Amount of the invoice to be paid.
             ln_fee_msat (int): Actually paid Lightning network fees.
-            outputs (List[BlindedMessage]): Outputs to sign for returning the overpaid fees.
+            outputs (Optional[List[BlindedMessage]]): Outputs to sign for returning the overpaid fees.
 
         Raises:
             Exception: Output validation failed.
@@ -541,22 +612,24 @@ class Ledger:
         """
         # we make sure that the fee is positive
         ln_fee_msat = abs(ln_fee_msat)
-        # maximum number of change outputs (must be in consensus with wallet)
-        n_return_outputs = 4
+
         ln_fee_sat = math.ceil(ln_fee_msat / 1000)
         user_paid_fee_sat = total_provided - invoice_amount
+        overpaid_fee_sat = user_paid_fee_sat - ln_fee_sat
         logger.debug(
-            f"Lightning fee was: {ln_fee_sat}. User paid: {user_paid_fee_sat}. Returning difference."
+            f"Lightning fee was: {ln_fee_sat}. User paid: {user_paid_fee_sat}. "
+            f"Returning difference: {overpaid_fee_sat}."
         )
-        if user_paid_fee_sat - ln_fee_sat > 0 and outputs is not None:
-            # we will only accept at maximum n_return_outputs outputs
-            assert len(outputs) <= n_return_outputs, Exception(
-                "too many change outputs provided"
-            )
 
-            return_amounts = amount_split(user_paid_fee_sat - ln_fee_sat)
+        if overpaid_fee_sat > 0 and outputs is not None:
+            return_amounts = amount_split(overpaid_fee_sat)
+
+            # We return at most as many outputs as were provided or as many as are
+            # required to pay back the overpaid fee.
+            n_return_outputs = min(len(outputs), len(return_amounts))
+
             # we only need as many outputs as we have change to return
-            outputs = outputs[: len(return_amounts)]
+            outputs = outputs[:n_return_outputs]
             # we sort the return_amounts in descending order so we only
             # take the largest values in the next step
             return_amounts_sorted = sorted(return_amounts, reverse=True)
@@ -630,8 +703,9 @@ class Ledger:
             keyset (Optional[MintKeyset], optional): Keyset to use. If not provided, uses active keyset. Defaults to None.
 
         Raises:
+            Exception: Lightning invvoice is not paid.
             Exception: Lightning is turned on but no payment hash is provided.
-            e: Something went wrong with the invoice check.
+            Exception: Something went wrong with the invoice check.
             Exception: Amount too large.
 
         Returns:
@@ -640,20 +714,17 @@ class Ledger:
         logger.trace("called mint")
         amounts = [b.amount for b in B_s]
         amount = sum(amounts)
-        async with self.db.connect() as conn:
-            logger.trace("attempting lock table invoice")
-            await conn.execute(lock_table(self.db, "invoices"))
-            logger.trace("locked table invoice")
-            # check if lightning invoice was paid
-            if settings.lightning:
-                if not hash:
-                    raise Exception("no hash provided.")
-                try:
-                    logger.trace("checking lightning invoice")
-                    paid = await self._check_lightning_invoice(amount, hash, conn)
-                    logger.trace(f"invoice paid: {paid}")
-                except Exception as e:
-                    raise e
+
+        if settings.lightning:
+            if not hash:
+                raise Exception("no hash provided.")
+            self.locks[hash] = (
+                self.locks.get(hash) or asyncio.Lock()
+            )  # create a new lock if it doesn't exist
+            async with self.locks[hash]:
+                # will raise an exception if the invoice is not paid or tokens are already issued
+                await self._check_lightning_invoice(amount, hash)
+            del self.locks[hash]
 
         for amount in amounts:
             if amount not in [2**i for i in range(settings.max_order)]:
@@ -684,15 +755,7 @@ class Ledger:
 
         logger.trace("melt called")
 
-        async with self.db.connect() as conn:
-            logger.trace("attempting lock table proofs_pending")
-            await conn.execute(lock_table(self.db, "proofs_pending"))
-            logger.trace("locked table proofs_pending")
-            # validate and set proofs as pending
-            logger.trace("setting proofs pending")
-            await self._set_proofs_pending(proofs, conn)
-            logger.trace(f"set proofs as pending")
-        logger.trace("unlocked table proofs_pending")
+        await self._set_proofs_pending(proofs)
 
         try:
             await self._verify_proofs(proofs)
@@ -748,14 +811,7 @@ class Ledger:
             raise e
         finally:
             # delete proofs from pending list
-            async with self.db.connect() as conn:
-                logger.trace("attempting lock table proofs_pending")
-                await conn.execute(lock_table(self.db, "proofs_pending"))
-                logger.trace("locked table proofs_pending")
-                logger.trace("unsetting proofs as pending")
-                await self._unset_proofs_pending(proofs, conn)
-                logger.trace(f"unset proofs as pending")
-            logger.trace("unlocked table proofs_pending")
+            await self._unset_proofs_pending(proofs)
 
         return status, preimage, return_promises
 
@@ -826,15 +882,9 @@ class Ledger:
             Tuple[List[BlindSignature],List[BlindSignature]]: Promises on both sides of the split.
         """
         logger.trace(f"split called")
-        # set proofs as pending
-        async with self.db.connect() as conn:
-            logger.trace("attempting lock table proofs_pending")
-            await conn.execute(lock_table(self.db, "proofs_pending"))
-            logger.trace("locked table proofs_pending")
-            # validate and set proofs as pending
-            logger.trace("setting proofs pending")
-            await self._set_proofs_pending(proofs, conn)
-            logger.trace(f"set proofs as pending")
+
+        await self._set_proofs_pending(proofs)
+
         total = sum_proofs(proofs)
 
         try:
@@ -860,13 +910,7 @@ class Ledger:
             raise e
         finally:
             # delete proofs from pending list
-            async with self.db.connect() as conn:
-                logger.trace("attempting lock table proofs_pending")
-                await conn.execute(lock_table(self.db, "proofs_pending"))
-                logger.trace("locked table proofs_pending")
-                logger.trace("unsetting proofs as pending")
-                await self._unset_proofs_pending(proofs, conn)
-                logger.trace(f"unset proofs as pending")
+            await self._unset_proofs_pending(proofs)
 
         # Mark proofs as used and prepare new promises
         logger.trace(f"invalidating proofs")
