@@ -1,10 +1,1 @@
-
-{
-    "repos": [
-        {
-            "id": "cashu",
-            "organisation": "lnbits",
-            "repository": "cashu"
-        }
-    ]
-}
+{"repos": [{"id": "cashu", "organisation": "lnbits", "repository": "cashu"}]}
