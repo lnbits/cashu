@@ -324,7 +324,7 @@ async def melt_coins(
         else:
             fees_msat = 0
         assert total_provided >= amount + math.ceil(fees_msat / 1000), Exception(
-            f"Provided proofs ({total_provided} sats) not enough for Lightning payment ({amount + fees_msat} sats)."
+            f"Provided proofs ({total_provided} sats) not enough for Lightning payment ({amount + math.ceil(fees_msat / 1000)} sats)."
         )
         logger.debug(f"Cashu: Initiating payment of {total_provided} sats")
         try:
