@@ -1,5 +1,5 @@
-import math
 import asyncio
+import math
 from http import HTTPStatus
 from typing import Dict, Union
 
@@ -137,9 +137,7 @@ async def keys(cashu_id: str) -> dict[int, str]:
 
 
 @cashu_ext.get("/api/v1/{cashu_id}/keys/{idBase64Urlsafe}")
-async def keyset_keys(
-    cashu_id: str, idBase64Urlsafe: str
-) -> dict[int, str]:
+async def keyset_keys(cashu_id: str, idBase64Urlsafe: str) -> dict[int, str]:
     """
     Get the public keys of the mint of a specificy keyset id.
     The id is encoded in base64_urlsafe and needs to be converted back to
@@ -219,6 +217,8 @@ async def mint(
     """
     Requests the minting of tokens belonging to a paid payment request.
     Call this endpoint after `GET /mint`.
+
+    Note: This endpoint implements the logic in ledger.mint() and ledger._check_lightning_invoice()
     """
     cashu: Union[Cashu, None] = await get_cashu(cashu_id)
     if cashu is None:
@@ -288,9 +288,7 @@ async def mint(
 
 
 @cashu_ext.post("/api/v1/{cashu_id}/melt")
-async def melt_coins(
-    payload: PostMeltRequest, cashu_id: str
-) -> GetMeltResponse:
+async def melt_coins(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
     """Invalidates proofs and pays a Lightning invoice."""
     cashu: Union[None, Cashu] = await get_cashu(cashu_id)
     if cashu is None:
@@ -311,7 +309,7 @@ async def melt_coins(
     # set proofs as pending
     await ledger._set_proofs_pending(proofs)
     try:
-        await ledger._verify_proofs(proofs)
+        await ledger._verify_proofs_and_outputs(proofs)
 
         total_provided = sum([p["amount"] for p in proofs])
         invoice_obj = bolt11.decode(invoice)
@@ -324,7 +322,7 @@ async def melt_coins(
         else:
             fees_msat = 0
         assert total_provided >= amount + math.ceil(fees_msat / 1000), Exception(
-            f"Provided proofs ({total_provided} sats) not enough for Lightning payment ({amount + fees_msat} sats)."
+            f"Provided proofs ({total_provided} sats) not enough for Lightning payment ({amount + math.ceil(fees_msat / 1000)} sats)."
         )
         logger.debug(f"Cashu: Initiating payment of {total_provided} sats")
         try:
@@ -386,14 +384,12 @@ async def check_spendable(
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
-    spendableList = await ledger.check_spendable(payload.proofs)
-    return CheckSpendableResponse(spendable=spendableList)
+    spendableList, pendingList = await ledger.check_proof_state(payload.proofs)
+    return CheckSpendableResponse(spendable=spendableList, pending=pendingList)
 
 
 @cashu_ext.post("/api/v1/{cashu_id}/checkfees")
-async def check_fees(
-    payload: CheckFeesRequest, cashu_id: str
-) -> CheckFeesResponse:
+async def check_fees(payload: CheckFeesRequest, cashu_id: str) -> CheckFeesResponse:
     """
     Responds with the fees necessary to pay a Lightning invoice.
     Used by wallets for figuring out the fees they need to supply.
@@ -415,9 +411,7 @@ async def check_fees(
 
 
 @cashu_ext.post("/api/v1/{cashu_id}/split")
-async def split(
-    payload: PostSplitRequest, cashu_id: str
-) -> PostSplitResponse:
+async def split(payload: PostSplitRequest, cashu_id: str) -> PostSplitResponse:
     """
     Requetst a set of tokens with amount "total" to be split into two
     newly minted sets with amount "split" and "total-split".
