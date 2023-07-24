@@ -7,7 +7,7 @@ from fastapi import Depends, Query
 from loguru import logger
 from starlette.exceptions import HTTPException
 
-from lnbits import bolt11
+from bolt11.decode import decode
 from lnbits.core.crud import check_internal, get_user
 from lnbits.core.services import (
     check_transaction_status,
@@ -312,13 +312,13 @@ async def melt_coins(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse
         await ledger._verify_proofs_and_outputs(proofs)
 
         total_provided = sum([p["amount"] for p in proofs])
-        invoice_obj = bolt11.decode(invoice)
-        amount = math.ceil(invoice_obj.amount_msat / 1000)
+        invoice_obj = decode(invoice)
+        amount = math.ceil(invoice_obj.amount / 1000)
 
         internal_checking_id = await check_internal(invoice_obj.payment_hash)
 
         if not internal_checking_id:
-            fees_msat = fee_reserve(invoice_obj.amount_msat)
+            fees_msat = fee_reserve(invoice_obj.amount)
         else:
             fees_msat = 0
         assert total_provided >= amount + math.ceil(fees_msat / 1000), Exception(
@@ -400,11 +400,11 @@ async def check_fees(payload: CheckFeesRequest, cashu_id: str) -> CheckFeesRespo
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
-    invoice_obj = bolt11.decode(payload.pr)
+    invoice_obj = decode(payload.pr)
     internal_checking_id = await check_internal(invoice_obj.payment_hash)
 
     if not internal_checking_id:
-        fees_msat = fee_reserve(invoice_obj.amount_msat)
+        fees_msat = fee_reserve(invoice_obj.amount)
     else:
         fees_msat = 0
     return CheckFeesResponse(fee=math.ceil(fees_msat / 1000))
