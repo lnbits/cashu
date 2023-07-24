@@ -1,5 +1,4 @@
 import asyncio
-import json
 import math
 import time
 from typing import Dict, List, Literal, Optional, Set, Tuple, Union
@@ -178,7 +177,11 @@ class Ledger:
         C_ = b_dhke.step2_bob(B_, private_key_amount)
         logger.trace(f"crud: _generate_promise storing promise for {amount}")
         await self.crud.store_promise(
-            amount=amount, B_=B_.serialize().hex(), C_=C_.serialize().hex(), db=self.db
+            amount=amount,
+            B_=B_.serialize().hex(),
+            C_=C_.serialize().hex(),
+            id=keyset.id,
+            db=self.db,
         )
         logger.trace(f"crud: _generate_promise stored promise for {amount}")
         return BlindedSignature(id=keyset.id, amount=amount, C_=C_.serialize().hex())
@@ -441,14 +444,6 @@ class Ledger:
             return False
         return True
 
-    def _verify_split_amount(self, amount: int) -> None:
-        """Split amount like output amount can't be negative or too big."""
-        try:
-            self._verify_amount(amount)
-        except:
-            # For better error message
-            raise Exception("invalid split amount: " + str(amount))
-
     def _verify_amount(self, amount: int) -> int:
         """Any amount used should be a positive integer not larger than 2^MAX_ORDER."""
         valid = (
@@ -460,12 +455,18 @@ class Ledger:
         return amount
 
     def _verify_equation_balanced(
-        self, proofs: List[Proof], outs: List[BlindedSignature]
+        self,
+        proofs: List[Proof],
+        outs: Union[List[BlindedSignature], List[BlindedMessage]],
     ) -> None:
-        """Verify that Σoutputs - Σinputs = 0."""
+        """Verify that Σinputs - Σoutputs = 0.
+        Outputs can be BlindedSignature or BlindedMessage.
+        """
         sum_inputs = sum(self._verify_amount(p.amount) for p in proofs)
         sum_outputs = sum(self._verify_amount(p.amount) for p in outs)
-        assert sum_outputs - sum_inputs == 0
+        assert (
+            sum_outputs - sum_inputs == 0
+        ), "inputs do not have same amount as outputs"
 
     async def _request_lightning_invoice(self, amount: int):
         """Generate a Lightning invoice using the funding source backend.
@@ -804,7 +805,7 @@ class Ledger:
         """
         logger.trace(f"called request_mint")
         if settings.mint_max_peg_in and amount > settings.mint_max_peg_in:
-            raise Exception(f"Maximum mint amount is {settings.mint_max_peg_in} sats.")
+            raise Exception(f"Maximum mint amount is {settings.mint_max_peg_in} sat.")
         if settings.mint_peg_out_only:
             raise Exception("Mint does not allow minting new tokens.")
 
@@ -904,7 +905,7 @@ class Ledger:
             invoice_amount = math.ceil(invoice_obj.amount_msat / 1000)
             if settings.mint_max_peg_out and invoice_amount > settings.mint_max_peg_out:
                 raise Exception(
-                    f"Maximum melt amount is {settings.mint_max_peg_out} sats."
+                    f"Maximum melt amount is {settings.mint_max_peg_out} sat."
                 )
             fees_msat = await self.check_fees(invoice)
             assert total_provided >= invoice_amount + fees_msat / 1000, Exception(
@@ -1004,10 +1005,11 @@ class Ledger:
 
     async def split(
         self,
+        *,
         proofs: List[Proof],
-        amount: int,
         outputs: List[BlindedMessage],
         keyset: Optional[MintKeyset] = None,
+        amount: Optional[int] = None,  # backwards compatibility < 0.13.0
     ):
         """Consumes proofs and prepares new promises based on the amount split. Used for splitting tokens
         Before sending or for redeeming tokens for new ones that have been received by another wallet.
@@ -1028,15 +1030,15 @@ class Ledger:
 
         await self._set_proofs_pending(proofs)
 
-        total = sum_proofs(proofs)
+        total_amount = sum_proofs(proofs)
 
         try:
             logger.trace(f"verifying _verify_split_amount")
             # verify that amount is kosher
-            self._verify_split_amount(amount)
+            self._verify_amount(total_amount)
+
             # verify overspending attempt
-            if amount > total:
-                raise Exception("split amount is higher than the total sum.")
+            self._verify_equation_balanced(proofs, outputs)
 
             logger.trace("verifying proofs: _verify_proofs_and_outputs")
             await self._verify_proofs_and_outputs(proofs, outputs)
@@ -1052,18 +1054,53 @@ class Ledger:
             # delete proofs from pending list
             await self._unset_proofs_pending(proofs)
 
-        # split outputs according to amount
-        outs_fst = amount_split(total - amount)
-        B_fst = [od for od in outputs[: len(outs_fst)]]
-        B_snd = [od for od in outputs[len(outs_fst) :]]
+        # BEGIN backwards compatibility < 0.13.0
+        if amount is not None:
+            logger.debug(
+                "Split: Client provided `amount` - backwards compatibility response pre 0.13.0"
+            )
+            # split outputs according to amount
+            total = sum_proofs(proofs)
+            if amount > total:
+                raise Exception("split amount is higher than the total sum.")
+            outs_fst = amount_split(total - amount)
+            B_fst = [od for od in outputs[: len(outs_fst)]]
+            B_snd = [od for od in outputs[len(outs_fst) :]]
 
-        # generate promises
-        prom_fst, prom_snd = await self._generate_promises(
-            B_fst, keyset
-        ), await self._generate_promises(B_snd, keyset)
+            # generate promises
+            prom_fst = await self._generate_promises(B_fst, keyset)
+            prom_snd = await self._generate_promises(B_snd, keyset)
+            promises = prom_fst + prom_snd
+        # END backwards compatibility < 0.13.0
+        else:
+            promises = await self._generate_promises(outputs, keyset)
 
-        # verify amounts in produced proofs
-        self._verify_equation_balanced(proofs, prom_fst + prom_snd)
+        # verify amounts in produced promises
+        self._verify_equation_balanced(proofs, promises)
 
         logger.trace(f"split successful")
+        return promises
         return prom_fst, prom_snd
+
+    async def restore(
+        self, outputs: List[BlindedMessage]
+    ) -> Tuple[List[BlindedMessage], List[BlindedSignature]]:
+        promises: List[BlindedSignature] = []
+        return_outputs: List[BlindedMessage] = []
+        async with self.db.connect() as conn:
+            for output in outputs:
+                logger.trace(f"looking for promise: {output}")
+                promise = await self.crud.get_promise(
+                    B_=output.B_, db=self.db, conn=conn
+                )
+                if promise is not None:
+                    # BEGIN backwards compatibility mints pre `m007_proofs_and_promises_store_id`
+                    # add keyset id to promise if not present only if the current keyset
+                    # is the only one ever used
+                    if not promise.id and len(self.keysets.keysets) == 1:
+                        promise.id = self.keyset.id
+                    # END backwards compatibility
+                    promises.append(promise)
+                    return_outputs.append(output)
+                    logger.trace(f"promise found: {promise}")
+        return return_outputs, promises

@@ -19,8 +19,10 @@ from ..core.base import (
     PostMeltRequest,
     PostMintRequest,
     PostMintResponse,
+    PostRestoreResponse,
     PostSplitRequest,
     PostSplitResponse,
+    PostSplitResponse_Deprecated,
 )
 from ..core.errors import CashuError
 from ..core.settings import settings
@@ -109,7 +111,7 @@ async def request_mint(amount: int = 0) -> Union[GetMintResponse, CashuError]:
     """
     logger.trace(f"> GET /mint: amount={amount}")
     if amount > 21_000_000 * 100_000_000 or amount <= 0:
-        return CashuError(code=0, error="Amount must be a valid amount of sats.")
+        return CashuError(code=0, error="Amount must be a valid amount of sat.")
     if settings.mint_peg_out_only:
         return CashuError(code=0, error="Mint does not allow minting new tokens.")
     try:
@@ -207,7 +209,7 @@ async def check_fees(payload: CheckFeesRequest) -> CheckFeesResponse:
 @router.post("/split", name="Split", summary="Split proofs at a specified amount")
 async def split(
     payload: PostSplitRequest,
-) -> Union[CashuError, PostSplitResponse]:
+) -> Union[CashuError, PostSplitResponse, PostSplitResponse_Deprecated]:
     """
     Requetst a set of tokens with amount "total" to be split into two
     newly minted sets with amount "split" and "total-split".
@@ -218,14 +220,45 @@ async def split(
     logger.trace(f"> POST /split: {payload}")
     assert payload.outputs, Exception("no outputs provided.")
     try:
-        split_return = await ledger.split(
-            payload.proofs, payload.amount, payload.outputs
+        promises = await ledger.split(
+            proofs=payload.proofs, outputs=payload.outputs, amount=payload.amount
         )
     except Exception as exc:
         return CashuError(code=0, error=str(exc))
-    if not split_return:
+    if not promises:
         return CashuError(code=0, error="there was an error with the split")
-    frst_promises, scnd_promises = split_return
-    resp = PostSplitResponse(fst=frst_promises, snd=scnd_promises)
-    logger.trace(f"< POST /split: {resp}")
-    return resp
+
+    if payload.amount:
+        # BEGIN backwards compatibility < 0.13
+        # old clients expect two lists of promises where the second one's amounts
+        # sum up to `amount`. The first one is the rest.
+        # The returned value `promises` has the form [keep1, keep2, ..., send1, send2, ...]
+        # The sum of the sendx is `amount`. We need to split this into two lists and keep the order of the elements.
+        frst_promises: List[BlindedSignature] = []
+        scnd_promises: List[BlindedSignature] = []
+        scnd_amount = 0
+        for promise in promises[::-1]:  # we iterate backwards
+            if scnd_amount < payload.amount:
+                scnd_promises.insert(0, promise)  # and insert at the beginning
+                scnd_amount += promise.amount
+            else:
+                frst_promises.insert(0, promise)  # and insert at the beginning
+        logger.trace(
+            f"Split into keep: {len(frst_promises)}: {sum([p.amount for p in frst_promises])} sat and send: {len(scnd_promises)}: {sum([p.amount for p in scnd_promises])} sat"
+        )
+        return PostSplitResponse_Deprecated(fst=frst_promises, snd=scnd_promises)
+        # END backwards compatibility < 0.13
+    else:
+        return PostSplitResponse(promises=promises)
+
+
+@router.post(
+    "/restore", name="Restore", summary="Restores a blinded signature from a secret"
+)
+async def restore(payload: PostMintRequest) -> Union[CashuError, PostRestoreResponse]:
+    assert payload.outputs, Exception("no outputs provided.")
+    try:
+        outputs, promises = await ledger.restore(payload.outputs)
+    except Exception as exc:
+        return CashuError(code=0, error=str(exc))
+    return PostRestoreResponse(outputs=outputs, promises=promises)
