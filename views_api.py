@@ -6,8 +6,12 @@ from typing import Dict, List, Union
 from fastapi import Depends, Query
 from lnbits import bolt11
 from lnbits.core.crud import check_internal, get_installed_extension, get_user
-from lnbits.core.services import (check_transaction_status, create_invoice,
-                                  fee_reserve, pay_invoice)
+from lnbits.core.services import (
+    check_transaction_status,
+    create_invoice,
+    fee_reserve,
+    pay_invoice,
+)
 from lnbits.decorators import WalletTypeInfo, get_key_type, require_admin_key
 from lnbits.helpers import urlsafe_short_hash
 from lnbits.wallets.base import PaymentStatus
@@ -16,16 +20,28 @@ from starlette.exceptions import HTTPException
 
 from . import cashu_ext, ledger
 from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
+
 # -------- cashu imports
-from .lib.cashu.core.base import (BlindedSignature, CheckFeesRequest,
-                                  CheckFeesResponse, CheckSpendableRequest,
-                                  CheckSpendableResponse, GetInfoResponse,
-                                  GetMeltResponse, GetMintResponse, Invoice,
-                                  KeysetsResponse, KeysResponse,
-                                  PostMeltRequest, PostMintRequest,
-                                  PostMintResponse, PostRestoreResponse,
-                                  PostSplitRequest, PostSplitResponse,
-                                  PostSplitResponse_Deprecated)
+from .lib.cashu.core.base import (
+    BlindedSignature,
+    CheckFeesRequest,
+    CheckFeesResponse,
+    CheckSpendableRequest,
+    CheckSpendableResponse,
+    GetInfoResponse,
+    GetMeltResponse,
+    GetMintResponse,
+    Invoice,
+    KeysetsResponse,
+    KeysResponse,
+    PostMeltRequest,
+    PostMintRequest,
+    PostMintResponse,
+    PostRestoreResponse,
+    PostSplitRequest,
+    PostSplitResponse,
+    PostSplitResponse_Deprecated,
+)
 from .lib.cashu.core.db import lock_table
 from .models import Cashu
 
@@ -34,7 +50,7 @@ from .models import Cashu
 # WARNING: Do not set this to False in production! This will create
 # tokens for free otherwise. This is for testing purposes only!
 
-LIGHTNING = False
+LIGHTNING = True
 
 if not LIGHTNING:
     logger.warning(
