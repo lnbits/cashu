@@ -5,13 +5,9 @@ from typing import Dict, List, Union
 
 from fastapi import Depends, Query
 from lnbits import bolt11
-from lnbits.core.crud import check_internal, get_user
-from lnbits.core.services import (
-    check_transaction_status,
-    create_invoice,
-    fee_reserve,
-    pay_invoice,
-)
+from lnbits.core.crud import check_internal, get_installed_extension, get_user
+from lnbits.core.services import (check_transaction_status, create_invoice,
+                                  fee_reserve, pay_invoice)
 from lnbits.decorators import WalletTypeInfo, get_key_type, require_admin_key
 from lnbits.helpers import urlsafe_short_hash
 from lnbits.wallets.base import PaymentStatus
@@ -20,24 +16,16 @@ from starlette.exceptions import HTTPException
 
 from . import cashu_ext, ledger
 from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
-
 # -------- cashu imports
-from .lib.cashu.core.base import (
-    BlindedSignature,
-    CheckFeesRequest,
-    CheckFeesResponse,
-    CheckSpendableRequest,
-    CheckSpendableResponse,
-    GetMeltResponse,
-    GetMintResponse,
-    Invoice,
-    PostMeltRequest,
-    PostMintRequest,
-    PostMintResponse,
-    PostSplitRequest,
-    PostSplitResponse,
-    PostSplitResponse_Deprecated,
-)
+from .lib.cashu.core.base import (BlindedSignature, CheckFeesRequest,
+                                  CheckFeesResponse, CheckSpendableRequest,
+                                  CheckSpendableResponse, GetInfoResponse,
+                                  GetMeltResponse, GetMintResponse, Invoice,
+                                  KeysetsResponse, KeysResponse,
+                                  PostMeltRequest, PostMintRequest,
+                                  PostMintResponse, PostRestoreResponse,
+                                  PostSplitRequest, PostSplitResponse,
+                                  PostSplitResponse_Deprecated)
 from .lib.cashu.core.db import lock_table
 from .models import Cashu
 
@@ -122,10 +110,39 @@ async def api_cashu_delete(
 #######################################
 ########### CASHU ENDPOINTS ###########
 #######################################
+@cashu_ext.get(
+    "/api/v1/{cashu_id}/info",
+    name="Mint information",
+    summary="Mint information, operator contact information, and other info.",
+    response_model=GetInfoResponse,
+    response_model_exclude_none=True,
+)
+async def info(cashu_id: str):
+    cashu: Union[Cashu, None] = await get_cashu(cashu_id)
+
+    if not cashu:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
+        )
+    extension_info = await get_installed_extension("cashu")
+    if extension_info:
+        installed_version = extension_info.get("version")
+    else:
+        installed_version = "unknown"
+    return GetInfoResponse(
+        name=cashu.name,
+        version=f"LNbitsCashu/{installed_version}",
+    )
 
 
-@cashu_ext.get("/api/v1/{cashu_id}/keys", status_code=HTTPStatus.OK)
-async def keys(cashu_id: str) -> dict[int, str]:
+@cashu_ext.get(
+    "/api/v1/{cashu_id}/keys",
+    name="Mint public keys",
+    summary="Get the public keys of the newest mint keyset",
+    status_code=HTTPStatus.OK,
+    response_model=KeysResponse,
+)
+async def keys(cashu_id: str) -> KeysResponse:
     """Get the public keys of the mint"""
     cashu: Union[Cashu, None] = await get_cashu(cashu_id)
 
@@ -134,11 +151,18 @@ async def keys(cashu_id: str) -> dict[int, str]:
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
 
-    return ledger.get_keyset(keyset_id=cashu.keyset_id)
+    keyset = ledger.get_keyset(keyset_id=cashu.keyset_id)
+    return KeysResponse.parse_obj(keyset)
 
 
-@cashu_ext.get("/api/v1/{cashu_id}/keys/{idBase64Urlsafe}")
-async def keyset_keys(cashu_id: str, idBase64Urlsafe: str) -> dict[int, str]:
+@cashu_ext.get(
+    "/api/v1/{cashu_id}/keys/{idBase64Urlsafe}",
+    name="Keyset public keys",
+    summary="Public keys of a specific keyset",
+    status_code=HTTPStatus.OK,
+    response_model=KeysResponse,
+)
+async def keyset_keys(cashu_id: str, idBase64Urlsafe: str) -> KeysResponse:
     """
     Get the public keys of the mint of a specificy keyset id.
     The id is encoded in base64_urlsafe and needs to be converted back to
@@ -154,11 +178,16 @@ async def keyset_keys(cashu_id: str, idBase64Urlsafe: str) -> dict[int, str]:
 
     id = idBase64Urlsafe.replace("-", "+").replace("_", "/")
     keyset = ledger.get_keyset(keyset_id=id)
-    return keyset
+    return KeysResponse.parse_obj(keyset)
 
 
-@cashu_ext.get("/api/v1/{cashu_id}/keysets", status_code=HTTPStatus.OK)
-async def keysets(cashu_id: str) -> dict[str, list[str]]:
+@cashu_ext.get(
+    "/api/v1/{cashu_id}/keysets",
+    status_code=HTTPStatus.OK,
+    name="Active keysets",
+    summary="Get all active keyset id of the mind",
+)
+async def keysets(cashu_id: str) -> KeysetsResponse:
     """Get the public keys of the mint"""
     cashu: Union[Cashu, None] = await get_cashu(cashu_id)
 
@@ -167,10 +196,14 @@ async def keysets(cashu_id: str) -> dict[str, list[str]]:
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
 
-    return {"keysets": [cashu.keyset_id]}
+    return KeysetsResponse.parse_obj({"keysets": [cashu.keyset_id]})
 
 
-@cashu_ext.get("/api/v1/{cashu_id}/mint")
+@cashu_ext.get(
+    "/api/v1/{cashu_id}/mint",
+    name="Request mint",
+    summary="Request minting of new tokens",
+)
 async def request_mint(cashu_id: str, amount: int = 0) -> GetMintResponse:
     """
     Request minting of new tokens. The mint responds with a Lightning invoice.
@@ -208,7 +241,11 @@ async def request_mint(cashu_id: str, amount: int = 0) -> GetMintResponse:
     return resp
 
 
-@cashu_ext.post("/api/v1/{cashu_id}/mint")
+@cashu_ext.post(
+    "/api/v1/{cashu_id}/mint",
+    name="Mint tokens",
+    summary="Mint tokens in exchange for a Bitcoin paymemt that the user has made",
+)
 async def mint(
     data: PostMintRequest,
     cashu_id: str,
@@ -288,7 +325,11 @@ async def mint(
         return PostMintResponse(promises=promises)
 
 
-@cashu_ext.post("/api/v1/{cashu_id}/melt")
+@cashu_ext.post(
+    "/api/v1/{cashu_id}/melt",
+    name="Melt tokens",
+    summary="Melt tokens for a Bitcoin payment that the mint will make for the user in exchange",
+)
 async def melt_coins(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
     """Invalidates proofs and pays a Lightning invoice."""
     cashu: Union[None, Cashu] = await get_cashu(cashu_id)
@@ -375,7 +416,11 @@ async def melt_coins(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse
     )
 
 
-@cashu_ext.post("/api/v1/{cashu_id}/check")
+@cashu_ext.post(
+    "/api/v1/{cashu_id}/check",
+    name="Check proof state",
+    summary="Check whether a proof is spent already or is pending in a transaction",
+)
 async def check_spendable(
     payload: CheckSpendableRequest, cashu_id: str
 ) -> CheckSpendableResponse:
@@ -389,7 +434,11 @@ async def check_spendable(
     return CheckSpendableResponse(spendable=spendableList, pending=pendingList)
 
 
-@cashu_ext.post("/api/v1/{cashu_id}/checkfees")
+@cashu_ext.post(
+    "/api/v1/{cashu_id}/checkfees",
+    name="Check fees",
+    summary="Check fee reserve for a Lightning payment",
+)
 async def check_fees(payload: CheckFeesRequest, cashu_id: str) -> CheckFeesResponse:
     """
     Responds with the fees necessary to pay a Lightning invoice.
@@ -411,7 +460,11 @@ async def check_fees(payload: CheckFeesRequest, cashu_id: str) -> CheckFeesRespo
     return CheckFeesResponse(fee=math.ceil(fees_msat / 1000))
 
 
-@cashu_ext.post("/api/v1/{cashu_id}/split")
+@cashu_ext.post(
+    "/api/v1/{cashu_id}/split",
+    name="Split",
+    summary="Split proofs at a specified amount",
+)
 async def split(
     payload: PostSplitRequest, cashu_id: str
 ) -> Union[PostSplitResponse, PostSplitResponse_Deprecated]:
@@ -476,3 +529,14 @@ async def split(
         # END backwards compatibility < 0.13
     else:
         return PostSplitResponse(promises=promises)
+
+
+@cashu_ext.post(
+    "/api/v1/{cashu_id}/restore",
+    name="Restore",
+    summary="Restores a blinded signature from a secret",
+)
+async def restore(payload: PostMintRequest) -> PostRestoreResponse:
+    assert payload.outputs, Exception("no outputs provided.")
+    outputs, promises = await ledger.restore(payload.outputs)
+    return PostRestoreResponse(outputs=outputs, promises=promises)
