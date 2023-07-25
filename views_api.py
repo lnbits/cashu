@@ -34,7 +34,7 @@ from .models import Cashu
 # WARNING: Do not set this to False in production! This will create
 # tokens for free otherwise. This is for testing purposes only!
 
-LIGHTNING = True
+LIGHTNING = False
 
 if not LIGHTNING:
     logger.warning(
@@ -140,7 +140,6 @@ async def info(cashu_id: str):
     name="Mint public keys",
     summary="Get the public keys of the newest mint keyset",
     status_code=HTTPStatus.OK,
-    response_model=KeysResponse,
 )
 async def keys(cashu_id: str) -> KeysResponse:
     """Get the public keys of the mint"""
@@ -160,7 +159,6 @@ async def keys(cashu_id: str) -> KeysResponse:
     name="Keyset public keys",
     summary="Public keys of a specific keyset",
     status_code=HTTPStatus.OK,
-    response_model=KeysResponse,
 )
 async def keyset_keys(cashu_id: str, idBase64Urlsafe: str) -> KeysResponse:
     """
