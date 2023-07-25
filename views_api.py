@@ -1,12 +1,9 @@
 import asyncio
 import math
 from http import HTTPStatus
-from typing import Dict, Union
+from typing import Dict, List, Union
 
 from fastapi import Depends, Query
-from loguru import logger
-from starlette.exceptions import HTTPException
-
 from lnbits import bolt11
 from lnbits.core.crud import check_internal, get_user
 from lnbits.core.services import (
@@ -18,12 +15,15 @@ from lnbits.core.services import (
 from lnbits.decorators import WalletTypeInfo, get_key_type, require_admin_key
 from lnbits.helpers import urlsafe_short_hash
 from lnbits.wallets.base import PaymentStatus
+from loguru import logger
+from starlette.exceptions import HTTPException
 
 from . import cashu_ext, ledger
 from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
 
 # -------- cashu imports
 from .lib.cashu.core.base import (
+    BlindedSignature,
     CheckFeesRequest,
     CheckFeesResponse,
     CheckSpendableRequest,
@@ -36,6 +36,7 @@ from .lib.cashu.core.base import (
     PostMintResponse,
     PostSplitRequest,
     PostSplitResponse,
+    PostSplitResponse_Deprecated,
 )
 from .lib.cashu.core.db import lock_table
 from .models import Cashu
@@ -411,7 +412,9 @@ async def check_fees(payload: CheckFeesRequest, cashu_id: str) -> CheckFeesRespo
 
 
 @cashu_ext.post("/api/v1/{cashu_id}/split")
-async def split(payload: PostSplitRequest, cashu_id: str) -> PostSplitResponse:
+async def split(
+    payload: PostSplitRequest, cashu_id: str
+) -> Union[PostSplitResponse, PostSplitResponse_Deprecated]:
     """
     Requetst a set of tokens with amount "total" to be split into two
     newly minted sets with amount "split" and "total-split".
@@ -432,23 +435,44 @@ async def split(payload: PostSplitRequest, cashu_id: str) -> PostSplitResponse:
             detail="Error: Tokens are from another mint.",
         )
 
-    amount = payload.amount
-    outputs = payload.outputs
-    assert outputs, Exception("no outputs provided.")
-    split_return = None
+    assert payload.outputs, Exception("no outputs provided.")
     try:
         keyset = ledger.keysets.keysets[cashu.keyset_id]
-        split_return = await ledger.split(proofs, amount, outputs, keyset)
+        promises = await ledger.split(
+            proofs=payload.proofs,
+            outputs=payload.outputs,
+            keyset=keyset,
+            amount=payload.amount,
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
             detail=str(exc),
         )
-    if not split_return:
+    if not promises:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
             detail="there was an error with the split",
         )
-    frst_promises, scnd_promises = split_return
-    resp = PostSplitResponse(fst=frst_promises, snd=scnd_promises)
-    return resp
+    if payload.amount:
+        # BEGIN backwards compatibility < 0.13
+        # old clients expect two lists of promises where the second one's amounts
+        # sum up to `amount`. The first one is the rest.
+        # The returned value `promises` has the form [keep1, keep2, ..., send1, send2, ...]
+        # The sum of the sendx is `amount`. We need to split this into two lists and keep the order of the elements.
+        frst_promises: List[BlindedSignature] = []
+        scnd_promises: List[BlindedSignature] = []
+        scnd_amount = 0
+        for promise in promises[::-1]:  # we iterate backwards
+            if scnd_amount < payload.amount:
+                scnd_promises.insert(0, promise)  # and insert at the beginning
+                scnd_amount += promise.amount
+            else:
+                frst_promises.insert(0, promise)  # and insert at the beginning
+        logger.trace(
+            f"Split into keep: {len(frst_promises)}: {sum([p.amount for p in frst_promises])} sat and send: {len(scnd_promises)}: {sum([p.amount for p in scnd_promises])} sat"
+        )
+        return PostSplitResponse_Deprecated(fst=frst_promises, snd=scnd_promises)
+        # END backwards compatibility < 0.13
+    else:
+        return PostSplitResponse(promises=promises)
