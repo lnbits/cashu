@@ -174,6 +174,7 @@ class Proof(BaseModel):
     ] = ""  # unique ID of send attempt, used for grouping pending tokens in the wallet
     time_created: Union[None, str] = ""
     time_reserved: Union[None, str] = ""
+    derivation_path: Union[None, str] = ""  # derivation path of the proof
 
     def to_dict(self):
         # dictionary without the fields that don't need to be send to Carol
@@ -270,11 +271,6 @@ class PostMintRequest(BaseModel):
     outputs: List[BlindedMessage]
 
 
-class PostMintResponseLegacy(BaseModel):
-    # NOTE: Backwards compability for < 0.8.0 where we used a simple list and not a key-value dictionary
-    __root__: List[BlindedSignature] = []
-
-
 class PostMintResponse(BaseModel):
     promises: List[BlindedSignature] = []
 
@@ -304,7 +300,7 @@ class GetMeltResponse(BaseModel):
 
 class PostSplitRequest(BaseModel):
     proofs: List[Proof]
-    amount: int
+    amount: Optional[int] = None  # deprecated since 0.13.0
     outputs: List[BlindedMessage]
     # signature: Optional[str] = None
 
@@ -322,8 +318,14 @@ class PostSplitRequest(BaseModel):
 
 
 class PostSplitResponse(BaseModel):
-    fst: List[BlindedSignature]
-    snd: List[BlindedSignature]
+    promises: List[BlindedSignature]
+
+
+# deprecated since 0.13.0
+class PostSplitResponse_Deprecated(BaseModel):
+    fst: List[BlindedSignature] = []
+    snd: List[BlindedSignature] = []
+    deprecated: str = "The amount field is deprecated since 0.13.0"
 
 
 # ------- API: CHECK -------
@@ -347,6 +349,14 @@ class CheckFeesRequest(BaseModel):
 
 class CheckFeesResponse(BaseModel):
     fee: Union[int, None]
+
+
+# ------- API: RESTORE -------
+
+
+class PostRestoreResponse(BaseModel):
+    outputs: List[BlindedMessage] = []
+    promises: List[BlindedSignature] = []
 
 
 # ------- KEYSETS -------
@@ -571,7 +581,7 @@ class TokenV3(BaseModel):
         return list(set([p.id for p in self.get_proofs()]))
 
     @classmethod
-    def deserialize(cls, tokenv3_serialized: str):
+    def deserialize(cls, tokenv3_serialized: str) -> "TokenV3":
         """
         Takes a TokenV3 and serializes it as "cashuA<json_urlsafe_base64>.
         """
@@ -583,7 +593,7 @@ class TokenV3(BaseModel):
         token = json.loads(base64.urlsafe_b64decode(token_base64))
         return cls.parse_obj(token)
 
-    def serialize(self):
+    def serialize(self) -> str:
         """
         Takes a TokenV3 and serializes it as "cashuA<json_urlsafe_base64>.
         """
