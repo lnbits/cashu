@@ -3,6 +3,6 @@
     "short_description": "Ecash mint and wallet",
     "tile": "/cashu/static/image/cashu.png",
     "contributors": ["calle", "vlad", "arcbtc"],
-    "min_lnbits_version": "0.XX.0",
+    "min_lnbits_version": "0.11.0",
     "hidden": false
 }
