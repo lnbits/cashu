@@ -156,8 +156,9 @@ async def info(cashu_id: str):
     name="Mint public keys",
     summary="Get the public keys of the newest mint keyset",
     status_code=HTTPStatus.OK,
+    response_model=KeysResponse,
 )
-async def keys(cashu_id: str) -> KeysResponse:
+async def keys(cashu_id: str):
     """Get the public keys of the mint"""
     cashu: Union[Cashu, None] = await get_cashu(cashu_id)
 
@@ -167,7 +168,7 @@ async def keys(cashu_id: str) -> KeysResponse:
         )
 
     keyset = ledger.get_keyset(keyset_id=cashu.keyset_id)
-    return KeysResponse.parse_obj(keyset)
+    return KeysResponse.parse_obj(keyset).__root__
 
 
 @cashu_ext.get(
@@ -175,8 +176,9 @@ async def keys(cashu_id: str) -> KeysResponse:
     name="Keyset public keys",
     summary="Public keys of a specific keyset",
     status_code=HTTPStatus.OK,
+    response_model=KeysResponse,
 )
-async def keyset_keys(cashu_id: str, idBase64Urlsafe: str) -> KeysResponse:
+async def keyset_keys(cashu_id: str, idBase64Urlsafe: str):
     """
     Get the public keys of the mint of a specificy keyset id.
     The id is encoded in base64_urlsafe and needs to be converted back to
@@ -192,7 +194,7 @@ async def keyset_keys(cashu_id: str, idBase64Urlsafe: str) -> KeysResponse:
 
     id = idBase64Urlsafe.replace("-", "+").replace("_", "/")
     keyset = ledger.get_keyset(keyset_id=id)
-    return KeysResponse.parse_obj(keyset)
+    return KeysResponse.parse_obj(keyset).__root__
 
 
 @cashu_ext.get(
@@ -369,6 +371,7 @@ async def melt_coins(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse
 
         total_provided = sum([p["amount"] for p in proofs])
         invoice_obj = bolt11.decode(invoice)
+        assert invoice_obj.amount_msat, Exception("Invoice amount is zero.")
         amount = math.ceil(invoice_obj.amount_msat / 1000)
 
         internal_checking_id = await check_internal(invoice_obj.payment_hash)
@@ -466,7 +469,7 @@ async def check_fees(payload: CheckFeesRequest, cashu_id: str) -> CheckFeesRespo
         )
     invoice_obj = bolt11.decode(payload.pr)
     internal_checking_id = await check_internal(invoice_obj.payment_hash)
-
+    assert invoice_obj.amount_msat, Exception("Invoice amount is zero.")
     if not internal_checking_id:
         fees_msat = fee_reserve(invoice_obj.amount_msat)
     else:
