@@ -126,7 +126,7 @@ async def request_mint(amount: int = 0) -> Union[GetMintResponse, CashuError]:
 @router.post(
     "/mint",
     name="Mint tokens",
-    summary="Mint tokens in exchange for a Bitcoin paymemt that the user has made",
+    summary="Mint tokens in exchange for a Bitcoin payment that the user has made",
 )
 async def mint(
     payload: PostMintRequest,
