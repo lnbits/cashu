@@ -1,4 +1,3 @@
-import time
 from typing import Any, List, Optional
 
 from ..core.base import BlindedSignature, Invoice, MintKeyset, Proof
@@ -18,8 +17,8 @@ class LedgerCrud:
     async def get_lightning_invoice(*args, **kwags):
         return await get_lightning_invoice(*args, **kwags)  # type: ignore
 
-    async def get_proofs_used(*args, **kwags):
-        return await get_proofs_used(*args, **kwags)  # type: ignore
+    async def get_secrets_used(*args, **kwags):
+        return await get_secrets_used(*args, **kwags)  # type: ignore
 
     async def invalidate_proof(*args, **kwags):
         return await invalidate_proof(*args, **kwags)  # type: ignore
@@ -50,23 +49,28 @@ class LedgerCrud:
 
 
 async def store_promise(
+    *,
     db: Database,
     amount: int,
     B_: str,
     C_: str,
     id: str,
+    e: str = "",
+    s: str = "",
     conn: Optional[Connection] = None,
 ):
     await (conn or db).execute(
         f"""
         INSERT INTO {table_with_schema(db, 'promises')}
-          (amount, B_b, C_b, id)
-        VALUES (?, ?, ?, ?)
+          (amount, B_b, C_b, e, s, id)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
             amount,
-            str(B_),
-            str(C_),
+            B_,
+            C_,
+            e,
+            s,
             id,
         ),
     )
@@ -87,15 +91,13 @@ async def get_promise(
     return BlindedSignature(amount=row[0], C_=row[2], id=row[3]) if row else None
 
 
-async def get_proofs_used(
+async def get_secrets_used(
     db: Database,
     conn: Optional[Connection] = None,
 ):
-    rows = await (conn or db).fetchall(
-        f"""
+    rows = await (conn or db).fetchall(f"""
         SELECT secret from {table_with_schema(db, 'proofs_used')}
-        """
-    )
+        """)
     return [row[0] for row in rows]
 
 
@@ -124,11 +126,9 @@ async def get_proofs_pending(
     db: Database,
     conn: Optional[Connection] = None,
 ):
-    rows = await (conn or db).fetchall(
-        f"""
+    rows = await (conn or db).fetchall(f"""
         SELECT * from {table_with_schema(db, 'proofs_pending')}
-        """
-    )
+        """)
     return [Proof(**r) for r in rows]
 
 

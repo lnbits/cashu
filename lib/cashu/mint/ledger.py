@@ -1,36 +1,41 @@
 import asyncio
 import math
-import time
 from typing import Dict, List, Literal, Optional, Set, Tuple, Union
 
 from loguru import logger
 
-from ..core import bolt11, legacy
+from ..core import bolt11
 from ..core.base import (
+    DLEQ,
     BlindedMessage,
     BlindedSignature,
     Invoice,
     MintKeyset,
     MintKeysets,
     Proof,
-    Secret,
-    SecretKind,
-    SigFlags,
 )
 from ..core.crypto import b_dhke
 from ..core.crypto.keys import derive_pubkey, random_hash
 from ..core.crypto.secp import PublicKey
 from ..core.db import Connection, Database
+from ..core.errors import (
+    InvoiceNotPaidError,
+    KeysetError,
+    KeysetNotFoundError,
+    LightningError,
+    NotAllowedError,
+    TransactionError,
+)
 from ..core.helpers import fee_reserve, sum_proofs
-from ..core.p2pk import verify_p2pk_signature
-from ..core.script import verify_bitcoin_script
 from ..core.settings import settings
 from ..core.split import amount_split
 from ..lightning.base import Wallet
 from ..mint.crud import LedgerCrud
+from .conditions import LedgerSpendingConditions
+from .verification import LedgerVerification
 
 
-class Ledger:
+class Ledger(LedgerVerification, LedgerSpendingConditions):
     locks: Dict[str, asyncio.Lock] = {}  # holds multiprocessing locks
     proofs_pending_lock: asyncio.Lock = (
         asyncio.Lock()
@@ -44,7 +49,7 @@ class Ledger:
         derivation_path="",
         crud=LedgerCrud,
     ):
-        self.proofs_used: Set[str] = set()
+        self.secrets_used: Set[str] = set()
         self.master_key = seed
         self.derivation_path = derivation_path
 
@@ -54,14 +59,9 @@ class Ledger:
         self.pubkey = derive_pubkey(self.master_key)
         self.keysets = MintKeysets([])
 
-    async def load_used_proofs(self):
-        """Load all used proofs from database."""
-        logger.trace(f"crud: loading used proofs")
-        proofs_used = await self.crud.get_proofs_used(db=self.db)
-        logger.trace(f"crud: loaded {len(proofs_used)} used proofs")
-        self.proofs_used = set(proofs_used)
+    # ------- KEYS -------
 
-    async def load_keyset(self, derivation_path, autosave=True):
+    async def load_keyset(self, derivation_path, autosave=True) -> MintKeyset:
         """Load the keyset for a derivation path if it already exists. If not generate new one and store in the db.
 
         Args:
@@ -76,7 +76,7 @@ class Ledger:
             derivation_path=derivation_path,
             version=settings.version,
         )
-        # load the keyest from db
+        # load the keyset from db
         logger.trace(f"crud: loading keyset for {derivation_path}")
         tmp_keyset_local: List[MintKeyset] = await self.crud.get_keyset(
             derivation_path=derivation_path, db=self.db
@@ -103,12 +103,11 @@ class Ledger:
                 logger.trace(f"crud: stored new keyset {keyset.id}.")
 
         # store the new keyset in the current keysets
-        if keyset.id:
-            self.keysets.keysets[keyset.id] = keyset
+        self.keysets.keysets[keyset.id] = keyset
         logger.debug(f"Loaded keyset {keyset.id}.")
         return keyset
 
-    async def init_keysets(self, autosave=True):
+    async def init_keysets(self, autosave=True) -> None:
         """Initializes all keysets of the mint from the db. Loads all past keysets and generate their keys. Then load the current keyset.
 
         Args:
@@ -117,7 +116,7 @@ class Ledger:
             generated from `self.derivation_path`. Defaults to True.
         """
         # load all past keysets from db
-        logger.trace(f"crud: loading keysets")
+        logger.trace("crud: loading keysets")
         tmp_keysets: List[MintKeyset] = await self.crud.get_keyset(db=self.db)
         logger.trace(f"crud: loaded {len(tmp_keysets)} keysets")
         # add keysets from db to current keysets
@@ -139,336 +138,17 @@ class Ledger:
         # load the current keyset
         self.keyset = await self.load_keyset(self.derivation_path, autosave)
 
-    async def _generate_promises(
-        self, B_s: List[BlindedMessage], keyset: Optional[MintKeyset] = None
-    ) -> list[BlindedSignature]:
-        """Generates promises that sum to the given amount.
+    def get_keyset(self, keyset_id: Optional[str] = None) -> Dict[int, str]:
+        """Returns a dictionary of hex public keys of a specific keyset for each supported amount"""
+        if keyset_id and keyset_id not in self.keysets.keysets:
+            raise KeysetNotFoundError()
+        keyset = self.keysets.keysets[keyset_id] if keyset_id else self.keyset
+        assert keyset.public_keys, KeysetError("no public keys for this keyset")
+        return {a: p.serialize().hex() for a, p in keyset.public_keys.items()}
 
-        Args:
-            B_s (List[BlindedMessage]): _description_
-            keyset (Optional[MintKeyset], optional): _description_. Defaults to None.
+    # ------- LIGHTNING -------
 
-        Returns:
-            list[BlindedSignature]: _description_
-        """
-        return [
-            await self._generate_promise(
-                b.amount, PublicKey(bytes.fromhex(b.B_), raw=True), keyset
-            )
-            for b in B_s
-        ]
-
-    async def _generate_promise(
-        self, amount: int, B_: PublicKey, keyset: Optional[MintKeyset] = None
-    ) -> BlindedSignature:
-        """Generates a promise (Blind signature) for given amount and returns a pair (amount, C').
-
-        Args:
-            amount (int): Amount of the promise.
-            B_ (PublicKey): Blinded secret (point on curve)
-            keyset (Optional[MintKeyset], optional): Which keyset to use. Private keys will be taken from this keyset. Defaults to None.
-
-        Returns:
-            BlindedSignature: Generated promise.
-        """
-        keyset = keyset if keyset else self.keyset
-        logger.trace(f"Generating promise with keyset {keyset.id}.")
-        private_key_amount = keyset.private_keys[amount]
-        C_ = b_dhke.step2_bob(B_, private_key_amount)
-        logger.trace(f"crud: _generate_promise storing promise for {amount}")
-        await self.crud.store_promise(
-            amount=amount,
-            B_=B_.serialize().hex(),
-            C_=C_.serialize().hex(),
-            id=keyset.id,
-            db=self.db,
-        )
-        logger.trace(f"crud: _generate_promise stored promise for {amount}")
-        return BlindedSignature(id=keyset.id, amount=amount, C_=C_.serialize().hex())
-
-    def _check_spendable(self, proof: Proof):
-        """Checks whether the proof was already spent."""
-        return not proof.secret in self.proofs_used
-
-    async def _check_pending(self, proofs: List[Proof]):
-        """Checks whether the proof is still pending."""
-        proofs_pending = await self.crud.get_proofs_pending(db=self.db)
-        pending_secrets = [pp.secret for pp in proofs_pending]
-        pending_states = [
-            True if p.secret in pending_secrets else False for p in proofs
-        ]
-        return pending_states
-
-    def _verify_secret_criteria(self, proof: Proof) -> Literal[True]:
-        """Verifies that a secret is present and is not too long (DOS prevention)."""
-        if proof.secret is None or proof.secret == "":
-            raise Exception("no secret in proof.")
-        if len(proof.secret) > 512:
-            raise Exception("secret too long.")
-        return True
-
-    def _verify_proof_bdhke(self, proof: Proof):
-        """Verifies that the proof of promise was issued by this ledger."""
-        if not self._check_spendable(proof):
-            raise Exception(f"tokens already spent. Secret: {proof.secret}")
-        # if no keyset id is given in proof, assume the current one
-        if not proof.id:
-            private_key_amount = self.keyset.private_keys[proof.amount]
-        else:
-            assert proof.id in self.keysets.keysets, f"keyset {proof.id} unknown"
-            logger.trace(
-                f"Validating proof with keyset {self.keysets.keysets[proof.id].id}."
-            )
-            # use the appropriate active keyset for this proof.id
-            private_key_amount = self.keysets.keysets[proof.id].private_keys[
-                proof.amount
-            ]
-
-        C = PublicKey(bytes.fromhex(proof.C), raw=True)
-        return b_dhke.verify(private_key_amount, C, proof.secret)
-
-    def _verify_input_spending_conditions(self, proof: Proof) -> bool:
-        """
-        Verify spending conditions:
-         Condition: P2SH - Witnesses proof.p2shscript
-         Condition: P2PK - Witness: proof.p2pksigs
-
-        """
-        # P2SH
-        try:
-            secret = Secret.deserialize(proof.secret)
-            logger.trace(f"proof.secret: {proof.secret}")
-            logger.trace(f"secret: {secret}")
-        except Exception as e:
-            # secret is not a spending condition so we treat is a normal secret
-            return True
-        if secret.kind == SecretKind.P2SH:
-            # check if locktime is in the past
-            now = time.time()
-            if secret.locktime and secret.locktime < now:
-                logger.trace(f"p2sh locktime ran out ({secret.locktime}<{now}).")
-                return True
-            logger.trace(f"p2sh locktime still active ({secret.locktime}>{now}).")
-
-            if (
-                proof.p2shscript is None
-                or proof.p2shscript.script is None
-                or proof.p2shscript.signature is None
-            ):
-                # no script present although secret indicates one
-                raise Exception("no script in proof.")
-
-            # execute and verify P2SH
-            txin_p2sh_address, valid = verify_bitcoin_script(
-                proof.p2shscript.script, proof.p2shscript.signature
-            )
-            if not valid:
-                raise Exception("script invalid.")
-            # check if secret commits to script address
-            assert secret.data == str(
-                txin_p2sh_address
-            ), f"secret does not contain correct P2SH address: {secret.data} is not {txin_p2sh_address}."
-            return True
-
-        # P2PK
-        if secret.kind == SecretKind.P2PK:
-            # check if locktime is in the past
-            pubkeys = secret.get_p2pk_pubkey_from_secret()
-            assert len(set(pubkeys)) == len(pubkeys), f"pubkeys must be unique."
-            logger.trace(f"pubkeys: {pubkeys}")
-            # we will get an empty list if the locktime has passed and no refund pubkey is present
-            if not pubkeys:
-                return True
-
-            # now we check the signature
-            if not proof.p2pksigs:
-                # no signature present although secret indicates one
-                logger.error(f"no p2pk signatures in proof: {proof.p2pksigs}")
-                raise Exception("no p2pk signatures in proof.")
-
-            # we make sure that there are no duplicate signatures
-            if len(set(proof.p2pksigs)) != len(proof.p2pksigs):
-                raise Exception("p2pk signatures must be unique.")
-
-            # we parse the secret as a P2PK commitment
-            # assert len(proof.secret.split(":")) == 5, "p2pk secret format invalid."
-
-            # INPUTS: check signatures proof.p2pksigs against pubkey
-            # we expect the signature to be on the pubkey (=message) itself
-            n_sigs_required = secret.n_sigs or 1
-            assert n_sigs_required > 0, "n_sigs must be positive."
-
-            # check if enough signatures are present
-            assert (
-                len(proof.p2pksigs) >= n_sigs_required
-            ), f"not enough signatures provided: {len(proof.p2pksigs)} < {n_sigs_required}."
-
-            n_valid_sigs_per_output = 0
-            # loop over all signatures in output
-            for input_sig in proof.p2pksigs:
-                for pubkey in pubkeys:
-                    logger.trace(f"verifying signature {input_sig} by pubkey {pubkey}.")
-                    logger.trace(f"Message: {secret.serialize().encode('utf-8')}")
-                    if verify_p2pk_signature(
-                        message=secret.serialize().encode("utf-8"),
-                        pubkey=PublicKey(bytes.fromhex(pubkey), raw=True),
-                        signature=bytes.fromhex(input_sig),
-                    ):
-                        n_valid_sigs_per_output += 1
-                        logger.trace(
-                            f"p2pk signature on input is valid: {input_sig} on {pubkey}."
-                        )
-                        continue
-                    else:
-                        logger.trace(
-                            f"p2pk signature on input is invalid: {input_sig} on {pubkey}."
-                        )
-            # check if we have enough valid signatures
-            assert n_valid_sigs_per_output, "no valid signature provided for input."
-            assert (
-                n_valid_sigs_per_output >= n_sigs_required
-            ), f"signature threshold not met. {n_valid_sigs_per_output} < {n_sigs_required}."
-            logger.trace(
-                f"{n_valid_sigs_per_output} of {n_sigs_required} valid signatures found."
-            )
-
-            logger.trace(proof.p2pksigs)
-            logger.trace("p2pk signature on inputs is valid.")
-
-            return True
-
-        # no spending contition
-        return True
-
-    def _verify_output_spending_conditions(
-        self, proofs: List[Proof], outputs: List[BlindedMessage]
-    ) -> bool:
-        """
-        Verify spending conditions:
-         Condition: P2PK - Witness: output.p2pksigs
-
-        """
-        # P2SH
-        pubkeys_per_proof = []
-        n_sigs = []
-        for proof in proofs:
-            try:
-                secret = Secret.deserialize(proof.secret)
-                # get all p2pk pubkeys from secrets
-                pubkeys_per_proof.append(secret.get_p2pk_pubkey_from_secret())
-                # get signature threshold from secrets
-                n_sigs.append(secret.n_sigs)
-            except Exception as e:
-                # secret is not a spending condition so we treat is a normal secret
-                return True
-        # for all proofs all pubkeys must be the same
-        assert (
-            len(set([tuple(pubs_output) for pubs_output in pubkeys_per_proof])) == 1
-        ), "pubkeys in all proofs must match."
-        pubkeys = pubkeys_per_proof[0]
-        if not pubkeys:
-            # no pubkeys present
-            return True
-
-        logger.trace(f"pubkeys: {pubkeys}")
-        # TODO: add limit for maximum number of pubkeys
-
-        # for all proofs all n_sigs must be the same
-        assert len(set(n_sigs)) == 1, "n_sigs in all proofs must match."
-        n_sigs_required = n_sigs[0] or 1
-
-        # first we check if all secrets are P2PK
-        if not all(
-            [Secret.deserialize(p.secret).kind == SecretKind.P2PK for p in proofs]
-        ):
-            # not all secrets are P2PK
-            return True
-
-        # now we check if any of the secrets has sigflag==SIG_ALL
-        if not any(
-            [Secret.deserialize(p.secret).sigflag == SigFlags.SIG_ALL for p in proofs]
-        ):
-            # no secret has sigflag==SIG_ALL
-            return True
-
-        # loop over all outputs and check if the signatures are valid for pubkeys with a threshold of n_sig
-        for output in outputs:
-            # we expect the signature to be on the pubkey (=message) itself
-            assert output.p2pksigs, "no signatures in output."
-            # TODO: add limit for maximum number of signatures
-
-            # we check whether any signature is duplicate
-            assert len(set(output.p2pksigs)) == len(
-                output.p2pksigs
-            ), "duplicate signatures in output."
-
-            n_valid_sigs_per_output = 0
-            # loop over all signatures in output
-            for output_sig in output.p2pksigs:
-                for pubkey in pubkeys:
-                    if verify_p2pk_signature(
-                        message=output.B_.encode("utf-8"),
-                        pubkey=PublicKey(bytes.fromhex(pubkey), raw=True),
-                        signature=bytes.fromhex(output_sig),
-                    ):
-                        n_valid_sigs_per_output += 1
-            assert n_valid_sigs_per_output, "no valid signature provided for output."
-            assert (
-                n_valid_sigs_per_output >= n_sigs_required
-            ), f"signature threshold not met. {n_valid_sigs_per_output} < {n_sigs_required}."
-            logger.trace(
-                f"{n_valid_sigs_per_output} of {n_sigs_required} valid signatures found."
-            )
-            logger.trace(output.p2pksigs)
-            logger.trace("p2pk signatures on output is valid.")
-
-        return True
-
-    def _verify_input_output_amounts(
-        self, inputs: List[Proof], outputs: List[BlindedMessage]
-    ) -> bool:
-        """Verifies that inputs have at least the same amount as outputs"""
-        input_amount = sum([p.amount for p in inputs])
-        output_amount = sum([o.amount for o in outputs])
-        return input_amount >= output_amount
-
-    def _verify_no_duplicate_proofs(self, proofs: List[Proof]) -> bool:
-        secrets = [p.secret for p in proofs]
-        if len(secrets) != len(list(set(secrets))):
-            return False
-        return True
-
-    def _verify_no_duplicate_outputs(self, outputs: List[BlindedMessage]) -> bool:
-        B_s = [od.B_ for od in outputs]
-        if len(B_s) != len(list(set(B_s))):
-            return False
-        return True
-
-    def _verify_amount(self, amount: int) -> int:
-        """Any amount used should be a positive integer not larger than 2^MAX_ORDER."""
-        valid = (
-            isinstance(amount, int) and amount > 0 and amount < 2**settings.max_order
-        )
-        logger.trace(f"Verifying amount {amount} is valid: {valid}")
-        if not valid:
-            raise Exception("invalid amount: " + str(amount))
-        return amount
-
-    def _verify_equation_balanced(
-        self,
-        proofs: List[Proof],
-        outs: Union[List[BlindedSignature], List[BlindedMessage]],
-    ) -> None:
-        """Verify that Σinputs - Σoutputs = 0.
-        Outputs can be BlindedSignature or BlindedMessage.
-        """
-        sum_inputs = sum(self._verify_amount(p.amount) for p in proofs)
-        sum_outputs = sum(self._verify_amount(p.amount) for p in outs)
-        assert (
-            sum_outputs - sum_inputs == 0
-        ), "inputs do not have same amount as outputs"
-
-    async def _request_lightning_invoice(self, amount: int):
+    async def _request_lightning_invoice(self, amount: int) -> Tuple[str, str]:
         """Generate a Lightning invoice using the funding source backend.
 
         Args:
@@ -481,12 +161,13 @@ class Ledger:
             Tuple[str, str]: Bolt11 invoice and payment hash (for lookup)
         """
         logger.trace(
-            f"_request_lightning_invoice: Requesting Lightning invoice for {amount} satoshis."
+            "_request_lightning_invoice: Requesting Lightning invoice for"
+            f" {amount} satoshis."
         )
         error, balance = await self.lightning.status()
         logger.trace(f"_request_lightning_invoice: Lightning wallet balance: {balance}")
         if error:
-            raise Exception(f"Lightning wallet not responding: {error}")
+            raise LightningError(f"Lightning wallet not responding: {error}")
         (
             ok,
             checking_id,
@@ -495,6 +176,12 @@ class Ledger:
         ) = await self.lightning.create_invoice(amount, "Cashu deposit")
         logger.trace(
             f"_request_lightning_invoice: Lightning invoice: {payment_request}"
+        )
+
+        if not ok:
+            raise LightningError(f"Lightning wallet error: {error_message}")
+        assert payment_request and checking_id, LightningError(
+            "could not fetch invoice from Lightning backend"
         )
         return payment_request, checking_id
 
@@ -517,48 +204,26 @@ class Ledger:
         Returns:
             bool: True if invoice has been paid, else False
         """
-        logger.trace(f"crud: _check_lightning_invoice: checking invoice {hash}")
         invoice: Union[Invoice, None] = await self.crud.get_lightning_invoice(
             hash=hash, db=self.db, conn=conn
         )
-        logger.trace(f"crud: _check_lightning_invoice: invoice: {invoice}")
         if invoice is None:
-            raise Exception("invoice not found.")
+            raise LightningError("invoice not found.")
         if invoice.issued:
-            raise Exception("tokens already issued for this invoice.")
+            raise LightningError("tokens already issued for this invoice.")
+        if amount > invoice.amount:
+            raise LightningError(
+                f"requested amount too high: {amount}. Invoice amount: {invoice.amount}"
+            )
         assert invoice.payment_hash, "invoice has no payment hash."
-
-        # set this invoice as issued
-        logger.trace(f"crud: setting invoice {invoice.payment_hash} as issued")
-        await self.crud.update_lightning_invoice(
-            hash=hash, issued=True, db=self.db, conn=conn
+        status = await self.lightning.get_invoice_status(invoice.payment_hash)
+        logger.trace(
+            f"_check_lightning_invoice: invoice {invoice.payment_hash} status: {status}"
         )
-        logger.trace(f"crud: invoice {invoice.payment_hash} set as issued")
+        if not status.paid:
+            raise InvoiceNotPaidError()
 
-        try:
-            if amount > invoice.amount:
-                raise Exception(
-                    f"requested amount too high: {amount}. Invoice amount: {invoice.amount}"
-                )
-            logger.trace(
-                f"_check_lightning_invoice: checking invoice {invoice.payment_hash}"
-            )
-            status = await self.lightning.get_invoice_status(invoice.payment_hash)
-            logger.trace(
-                f"_check_lightning_invoice: invoice {invoice.payment_hash} status: {status}"
-            )
-            if status.paid:
-                return status.paid
-            else:
-                raise Exception("Lightning invoice not paid yet.")
-        except Exception as e:
-            # unset issued
-            logger.trace(f"crud: unsetting invoice {invoice.payment_hash} as issued")
-            await self.crud.update_lightning_invoice(
-                hash=hash, issued=False, db=self.db, conn=conn
-            )
-            logger.trace(f"crud: invoice {invoice.payment_hash} unset as issued")
-            raise e
+        return status.paid
 
     async def _pay_lightning_invoice(self, invoice: str, fee_limit_msat: int):
         """Pays a Lightning invoice via the funding source backend.
@@ -573,11 +238,9 @@ class Ledger:
         Returns:
             Tuple[bool, string, int]: Returns payment status, preimage of invoice, paid fees (in Millisatoshi)
         """
-        logger.trace(f"_pay_lightning_invoice: paying Lightning invoice {invoice}")
         error, balance = await self.lightning.status()
-        logger.trace(f"_pay_lightning_invoice: Lightning wallet balance: {balance}")
         if error:
-            raise Exception(f"Lightning wallet not responding: {error}")
+            raise LightningError(f"Lightning wallet not responding: {error}")
         (
             ok,
             checking_id,
@@ -590,7 +253,9 @@ class Ledger:
         fee_msat = abs(fee_msat) if fee_msat else fee_msat
         return ok, preimage, fee_msat
 
-    async def _invalidate_proofs(self, proofs: List[Proof]):
+    # ------- ECASH -------
+
+    async def _invalidate_proofs(self, proofs: List[Proof]) -> None:
         """Adds secrets of proofs to the list of known secrets and stores them in the db.
         Removes proofs from pending table. This is executed if the ecash has been redeemed.
 
@@ -598,127 +263,11 @@ class Ledger:
             proofs (List[Proof]): Proofs to add to known secret table.
         """
         # Mark proofs as used and prepare new promises
-        proof_msgs = set([p.secret for p in proofs])
-        self.proofs_used |= proof_msgs
+        secrets = set([p.secret for p in proofs])
+        self.secrets_used |= secrets
         # store in db
-        logger.trace(f"crud: storing proofs")
         for p in proofs:
             await self.crud.invalidate_proof(proof=p, db=self.db)
-        logger.trace(f"crud: stored proofs")
-
-    async def _set_proofs_pending(
-        self, proofs: List[Proof], conn: Optional[Connection] = None
-    ):
-        """If none of the proofs is in the pending table (_validate_proofs_pending), adds proofs to
-        the list of pending proofs or removes them. Used as a mutex for proofs.
-
-        Args:
-            proofs (List[Proof]): Proofs to add to pending table.
-
-        Raises:
-            Exception: At least one proof already in pending table.
-        """
-        # first we check whether these proofs are pending aready
-        async with self.proofs_pending_lock:
-            await self._validate_proofs_pending(proofs, conn)
-            for p in proofs:
-                try:
-                    logger.trace(
-                        f"crud: _set_proofs_pending setting proof {p.secret} as pending"
-                    )
-                    await self.crud.set_proof_pending(proof=p, db=self.db, conn=conn)
-                    logger.trace(
-                        f"crud: _set_proofs_pending proof {p.secret} set as pending"
-                    )
-                except:
-                    raise Exception("proofs already pending.")
-
-    async def _unset_proofs_pending(
-        self, proofs: List[Proof], conn: Optional[Connection] = None
-    ):
-        """Deletes proofs from pending table.
-
-        Args:
-            proofs (List[Proof]): Proofs to delete.
-        """
-        # we try: except: this block in order to avoid that any errors here
-        # could block the _invalidate_proofs() call that happens afterwards.
-        async with self.proofs_pending_lock:
-            try:
-                for p in proofs:
-                    logger.trace(
-                        f"crud: _unset_proofs_pending unsetting proof {p.secret} as pending"
-                    )
-                    await self.crud.unset_proof_pending(proof=p, db=self.db, conn=conn)
-                    logger.trace(
-                        f"crud: _unset_proofs_pending proof {p.secret} unset as pending"
-                    )
-            except Exception as e:
-                print(e)
-                pass
-
-    async def _validate_proofs_pending(
-        self, proofs: List[Proof], conn: Optional[Connection] = None
-    ):
-        """Checks if any of the provided proofs is in the pending proofs table.
-
-        Args:
-            proofs (List[Proof]): Proofs to check.
-
-        Raises:
-            Exception: At least one of the proofs is in the pending table.
-        """
-        logger.trace(f"crud: _validate_proofs_pending validating proofs")
-        proofs_pending = await self.crud.get_proofs_pending(db=self.db, conn=conn)
-        logger.trace(f"crud: _validate_proofs_pending got proofs pending")
-        for p in proofs:
-            for pp in proofs_pending:
-                if p.secret == pp.secret:
-                    raise Exception("proofs are pending.")
-
-    async def _verify_proofs_and_outputs(
-        self, proofs: List[Proof], outputs: Optional[List[BlindedMessage]] = None
-    ):
-        """Checks all proofs and outputs for validity.
-
-        Args:
-            proofs (List[Proof]): List of proofs to check.
-            outputs (Optional[List[BlindedMessage]], optional): List of outputs to check. Must be provided for /split but not for /melt. Defaults to None.
-
-        Raises:
-            Exception: Scripts did not validate.
-            Exception: Criteria for provided secrets not met.
-            Exception: Duplicate proofs provided.
-            Exception: BDHKE verification failed.
-        """
-        # Verify inputs
-
-        # Verify secret criteria
-        if not all([self._verify_secret_criteria(p) for p in proofs]):
-            raise Exception("secrets do not match criteria.")
-        # verify that only unique proofs were used
-        if not self._verify_no_duplicate_proofs(proofs):
-            raise Exception("duplicate proofs.")
-        # Verify input spending conditions
-        if not all([self._verify_input_spending_conditions(p) for p in proofs]):
-            raise Exception("validation of input spending conditions failed.")
-        # Verify ecash signatures
-        if not all([self._verify_proof_bdhke(p) for p in proofs]):
-            raise Exception("could not verify proofs.")
-
-        if not outputs:
-            return
-
-        # Verify outputs
-
-        # verify that only unique outputs were used
-        if not self._verify_no_duplicate_outputs(outputs):
-            raise Exception("duplicate promises.")
-        if not self._verify_input_output_amounts(proofs, outputs):
-            raise Exception("input amounts less than output.")
-        # Verify output spending conditions
-        if outputs and not self._verify_output_spending_conditions(proofs, outputs):
-            raise Exception("validation of output spending conditions failed.")
 
     async def _generate_change_promises(
         self,
@@ -727,7 +276,7 @@ class Ledger:
         ln_fee_msat: int,
         outputs: Optional[List[BlindedMessage]],
         keyset: Optional[MintKeyset] = None,
-    ):
+    ) -> List[BlindedSignature]:
         """Generates a set of new promises (blinded signatures) from a set of blank outputs
         (outputs with no or ignored amount) by looking at the difference between the Lightning
         fee reserve provided by the wallet and the actual Lightning fee paid by the mint.
@@ -774,24 +323,17 @@ class Ledger:
             return_amounts_sorted = sorted(return_amounts, reverse=True)
             # we need to imprint these amounts into the blanket outputs
             for i in range(len(outputs)):
-                outputs[i].amount = return_amounts_sorted[i]
+                outputs[i].amount = return_amounts_sorted[i]  # type: ignore
             if not self._verify_no_duplicate_outputs(outputs):
-                raise Exception("duplicate promises.")
+                raise TransactionError("duplicate promises.")
             return_promises = await self._generate_promises(outputs, keyset)
             return return_promises
         else:
             return []
 
-    # Public methods
-    def get_keyset(self, keyset_id: Optional[str] = None):
-        """Returns a dictionary of hex public keys of a specific keyset for each supported amount"""
-        if keyset_id and keyset_id not in self.keysets.keysets:
-            raise Exception("keyset does not exist")
-        keyset = self.keysets.keysets[keyset_id] if keyset_id else self.keyset
-        assert keyset.public_keys, Exception("no public keys for this keyset")
-        return {a: p.serialize().hex() for a, p in keyset.public_keys.items()}
+    # ------- TRANSACTIONS -------
 
-    async def request_mint(self, amount: int):
+    async def request_mint(self, amount: int) -> Tuple[str, str]:
         """Returns Lightning invoice and stores it in the db.
 
         Args:
@@ -803,16 +345,18 @@ class Ledger:
         Returns:
             Tuple[str, str]: Bolt11 invoice and a hash (for looking it up later)
         """
-        logger.trace(f"called request_mint")
+        logger.trace("called request_mint")
         if settings.mint_max_peg_in and amount > settings.mint_max_peg_in:
-            raise Exception(f"Maximum mint amount is {settings.mint_max_peg_in} sat.")
+            raise NotAllowedError(
+                f"Maximum mint amount is {settings.mint_max_peg_in} sat."
+            )
         if settings.mint_peg_out_only:
-            raise Exception("Mint does not allow minting new tokens.")
+            raise NotAllowedError("Mint does not allow minting new tokens.")
 
         logger.trace(f"requesting invoice for {amount} satoshis")
         payment_request, payment_hash = await self._request_lightning_invoice(amount)
         logger.trace(f"got invoice {payment_request} with hash {payment_hash}")
-        assert payment_request and payment_hash, Exception(
+        assert payment_request and payment_hash, LightningError(
             "could not fetch invoice from Lightning backend"
         )
 
@@ -833,7 +377,7 @@ class Ledger:
         B_s: List[BlindedMessage],
         hash: Optional[str] = None,
         keyset: Optional[MintKeyset] = None,
-    ):
+    ) -> List[BlindedSignature]:
         """Mints a promise for coins for B_.
 
         Args:
@@ -851,25 +395,26 @@ class Ledger:
             List[BlindedSignature]: Signatures on the outputs.
         """
         logger.trace("called mint")
-        amounts = [b.amount for b in B_s]
-        amount = sum(amounts)
+        amount_outputs = sum([b.amount for b in B_s])
 
         if settings.lightning:
             if not hash:
-                raise Exception("no hash provided.")
+                raise NotAllowedError("no hash provided.")
             self.locks[hash] = (
                 self.locks.get(hash) or asyncio.Lock()
             )  # create a new lock if it doesn't exist
             async with self.locks[hash]:
-                # will raise an exception if the invoice is not paid or tokens are already issued
-                await self._check_lightning_invoice(amount, hash)
+                # will raise an exception if the invoice is not paid or tokens are
+                # already issued or the requested amount is too high
+                await self._check_lightning_invoice(amount_outputs, hash)
+
+                logger.trace(f"crud: setting invoice {hash} as issued")
+                await self.crud.update_lightning_invoice(
+                    hash=hash, issued=True, db=self.db
+                )
             del self.locks[hash]
 
-        for amount in amounts:
-            if amount not in [2**i for i in range(settings.max_order)]:
-                raise Exception(
-                    f"Can only mint amounts with 2^n up to {2**settings.max_order}."
-                )
+        self._verify_outputs(B_s)
 
         promises = await self._generate_promises(B_s, keyset)
         logger.trace("generated promises")
@@ -877,7 +422,7 @@ class Ledger:
 
     async def melt(
         self, proofs: List[Proof], invoice: str, outputs: Optional[List[BlindedMessage]]
-    ):
+    ) -> Tuple[bool, str, List[BlindedSignature]]:
         """Invalidates proofs and pays a Lightning invoice.
 
         Args:
@@ -897,53 +442,57 @@ class Ledger:
         await self._set_proofs_pending(proofs)
 
         try:
-            await self._verify_proofs_and_outputs(proofs)
-            logger.trace("verified proofs")
-
+            # verify amounts
             total_provided = sum_proofs(proofs)
             invoice_obj = bolt11.decode(invoice)
+            assert invoice_obj.amount_msat, "invoice has no amount."
             invoice_amount = math.ceil(invoice_obj.amount_msat / 1000)
             if settings.mint_max_peg_out and invoice_amount > settings.mint_max_peg_out:
-                raise Exception(
+                raise NotAllowedError(
                     f"Maximum melt amount is {settings.mint_max_peg_out} sat."
                 )
-            fees_msat = await self.check_fees(invoice)
-            assert total_provided >= invoice_amount + fees_msat / 1000, Exception(
-                "provided proofs not enough for Lightning payment."
+            reserve_fees_sat = await self.get_melt_fees(invoice)
+            # verify overspending attempt
+            assert (
+                total_provided >= invoice_amount + reserve_fees_sat
+            ), TransactionError(
+                "provided proofs not enough for Lightning payment. Provided:"
+                f" {total_provided}, needed: {invoice_amount + reserve_fees_sat}"
             )
 
-            # promises to return for overpaid fees
-            return_promises: List[BlindedSignature] = []
+            # verify spending inputs and their spending conditions
+            await self.verify_inputs_and_outputs(proofs)
 
             if settings.lightning:
-                logger.trace("paying lightning invoice")
-                status, preimage, fee_msat = await self._pay_lightning_invoice(
-                    invoice, fees_msat
+                logger.trace(f"paying lightning invoice {invoice}")
+                status, preimage, paid_fee_msat = await self._pay_lightning_invoice(
+                    invoice, reserve_fees_sat * 1000
                 )
+                preimage = preimage or ""
                 logger.trace("paid lightning invoice")
             else:
-                status, preimage, fee_msat = True, "preimage", 0
+                status, preimage, paid_fee_msat = True, "preimage", 0
 
-            logger.trace(
-                f"status: {status}, preimage: {preimage}, fee_msat: {fee_msat}"
+            logger.debug(
+                f"Melt status: {status}: preimage: {preimage}, fee_msat:"
+                f" {paid_fee_msat}"
             )
 
-            if status == True:
-                logger.trace(f"invalidating proofs")
-                await self._invalidate_proofs(proofs)
-                logger.trace("invalidated proofs")
-                # prepare change to compensate wallet for overpaid fees
-                assert fee_msat is not None, Exception("fees not valid")
-                if outputs:
-                    return_promises = await self._generate_change_promises(
-                        total_provided=total_provided,
-                        invoice_amount=invoice_amount,
-                        ln_fee_msat=fee_msat,
-                        outputs=outputs,
-                    )
-            else:
-                logger.trace("lightning payment unsuccessful")
-                raise Exception("Lightning payment unsuccessful.")
+            if not status:
+                raise LightningError("Lightning payment unsuccessful.")
+
+            # melt successful, invalidate proofs
+            await self._invalidate_proofs(proofs)
+
+            # prepare change to compensate wallet for overpaid fees
+            return_promises: List[BlindedSignature] = []
+            if outputs and paid_fee_msat is not None:
+                return_promises = await self._generate_change_promises(
+                    total_provided=total_provided,
+                    invoice_amount=invoice_amount,
+                    ln_fee_msat=paid_fee_msat,
+                    outputs=outputs,
+                )
 
         except Exception as e:
             logger.trace(f"exception: {e}")
@@ -954,28 +503,7 @@ class Ledger:
 
         return status, preimage, return_promises
 
-    async def check_proof_state(
-        self, proofs: List[Proof]
-    ) -> Tuple[List[bool], List[bool]]:
-        """Checks if provided proofs are spend or are pending.
-        Used by wallets to check if their proofs have been redeemed by a receiver or they are still in-flight in a transaction.
-
-        Returns two lists that are in the same order as the provided proofs. Wallet must match the list
-        to the proofs they have provided in order to figure out which proof is spendable or pending
-        and which isn't.
-
-        Args:
-            proofs (List[Proof]): List of proofs to check.
-
-        Returns:
-            List[bool]: List of which proof is still spendable (True if still spendable, else False)
-            List[bool]: List of which proof are pending (True if pending, else False)
-        """
-        spendable = [self._check_spendable(p) for p in proofs]
-        pending = await self._check_pending(proofs)
-        return spendable, pending
-
-    async def check_fees(self, pr: str):
+    async def get_melt_fees(self, pr: str) -> int:
         """Returns the fee reserve (in sat) that a wallet must add to its proofs
         in order to pay a Lightning invoice.
 
@@ -989,17 +517,18 @@ class Ledger:
         # if id does not exist (not internal), it returns paid = None
         if settings.lightning:
             decoded_invoice = bolt11.decode(pr)
-            amount = math.ceil(decoded_invoice.amount_msat / 1000)
+            amount_msat = decoded_invoice.amount_msat
             logger.trace(
-                f"check_fees: checking lightning invoice: {decoded_invoice.payment_hash}"
+                "get_melt_fees: checking lightning invoice:"
+                f" {decoded_invoice.payment_hash}"
             )
             paid = await self.lightning.get_invoice_status(decoded_invoice.payment_hash)
-            logger.trace(f"check_fees: paid: {paid}")
-            internal = paid.paid == False
+            logger.trace(f"get_melt_fees: paid: {paid}")
+            internal = paid.paid is False
         else:
-            amount = 0
+            amount_msat = 0
             internal = True
-        fees_msat = fee_reserve(amount * 1000, internal)
+        fees_msat = fee_reserve(amount_msat, internal)
         fee_sat = math.ceil(fees_msat / 1000)
         return fee_sat
 
@@ -1026,27 +555,14 @@ class Ledger:
         Returns:
             Tuple[List[BlindSignature],List[BlindSignature]]: Promises on both sides of the split.
         """
-        logger.trace(f"split called")
+        logger.trace("split called")
 
         await self._set_proofs_pending(proofs)
-
-        total_amount = sum_proofs(proofs)
-
         try:
-            logger.trace(f"verifying _verify_split_amount")
-            # verify that amount is kosher
-            self._verify_amount(total_amount)
-
-            # verify overspending attempt
-            self._verify_equation_balanced(proofs, outputs)
-
-            logger.trace("verifying proofs: _verify_proofs_and_outputs")
-            await self._verify_proofs_and_outputs(proofs, outputs)
-            logger.trace(f"verified proofs and outputs")
+            # verify spending inputs, outputs, and spending conditions
+            await self.verify_inputs_and_outputs(proofs, outputs)
             # Mark proofs as used and prepare new promises
-            logger.trace(f"invalidating proofs")
             await self._invalidate_proofs(proofs)
-            logger.trace(f"invalidated proofs")
         except Exception as e:
             logger.trace(f"split failed: {e}")
             raise e
@@ -1057,7 +573,8 @@ class Ledger:
         # BEGIN backwards compatibility < 0.13.0
         if amount is not None:
             logger.debug(
-                "Split: Client provided `amount` - backwards compatibility response pre 0.13.0"
+                "Split: Client provided `amount` - backwards compatibility response pre"
+                " 0.13.0"
             )
             # split outputs according to amount
             total = sum_proofs(proofs)
@@ -1078,9 +595,8 @@ class Ledger:
         # verify amounts in produced promises
         self._verify_equation_balanced(proofs, promises)
 
-        logger.trace(f"split successful")
+        logger.trace("split successful")
         return promises
-        return prom_fst, prom_snd
 
     async def restore(
         self, outputs: List[BlindedMessage]
@@ -1104,3 +620,152 @@ class Ledger:
                     return_outputs.append(output)
                     logger.trace(f"promise found: {promise}")
         return return_outputs, promises
+
+    # ------- BLIND SIGNATURES -------
+
+    async def _generate_promises(
+        self, B_s: List[BlindedMessage], keyset: Optional[MintKeyset] = None
+    ) -> list[BlindedSignature]:
+        """Generates promises that sum to the given amount.
+
+        Args:
+            B_s (List[BlindedMessage]): _description_
+            keyset (Optional[MintKeyset], optional): _description_. Defaults to None.
+
+        Returns:
+            list[BlindedSignature]: _description_
+        """
+        return [
+            await self._generate_promise(
+                b.amount, PublicKey(bytes.fromhex(b.B_), raw=True), keyset
+            )
+            for b in B_s
+        ]
+
+    async def _generate_promise(
+        self, amount: int, B_: PublicKey, keyset: Optional[MintKeyset] = None
+    ) -> BlindedSignature:
+        """Generates a promise (Blind signature) for given amount and returns a pair (amount, C').
+
+        Args:
+            amount (int): Amount of the promise.
+            B_ (PublicKey): Blinded secret (point on curve)
+            keyset (Optional[MintKeyset], optional): Which keyset to use. Private keys will be taken from this keyset. Defaults to None.
+
+        Returns:
+            BlindedSignature: Generated promise.
+        """
+        keyset = keyset if keyset else self.keyset
+        logger.trace(f"Generating promise with keyset {keyset.id}.")
+        private_key_amount = keyset.private_keys[amount]
+        C_, e, s = b_dhke.step2_bob(B_, private_key_amount)
+        logger.trace(f"crud: _generate_promise storing promise for {amount}")
+        await self.crud.store_promise(
+            amount=amount,
+            B_=B_.serialize().hex(),
+            C_=C_.serialize().hex(),
+            e=e.serialize(),
+            s=s.serialize(),
+            db=self.db,
+            id=keyset.id,
+        )
+        logger.trace(f"crud: _generate_promise stored promise for {amount}")
+        return BlindedSignature(
+            id=keyset.id,
+            amount=amount,
+            C_=C_.serialize().hex(),
+            dleq=DLEQ(e=e.serialize(), s=s.serialize()),
+        )
+
+    # ------- PROOFS -------
+
+    async def load_used_proofs(self) -> None:
+        """Load all used proofs from database."""
+        logger.trace("crud: loading used proofs")
+        secrets_used = await self.crud.get_secrets_used(db=self.db)
+        logger.trace(f"crud: loaded {len(secrets_used)} used proofs")
+        self.secrets_used = set(secrets_used)
+
+    def _check_spendable(self, proof: Proof) -> bool:
+        """Checks whether the proof was already spent."""
+        return proof.secret not in self.secrets_used
+
+    async def _check_pending(self, proofs: List[Proof]) -> List[bool]:
+        """Checks whether the proof is still pending."""
+        proofs_pending = await self.crud.get_proofs_pending(db=self.db)
+        pending_secrets = [pp.secret for pp in proofs_pending]
+        pending_states = [
+            True if p.secret in pending_secrets else False for p in proofs
+        ]
+        return pending_states
+
+    async def check_proof_state(
+        self, proofs: List[Proof]
+    ) -> Tuple[List[bool], List[bool]]:
+        """Checks if provided proofs are spend or are pending.
+        Used by wallets to check if their proofs have been redeemed by a receiver or they are still in-flight in a transaction.
+
+        Returns two lists that are in the same order as the provided proofs. Wallet must match the list
+        to the proofs they have provided in order to figure out which proof is spendable or pending
+        and which isn't.
+
+        Args:
+            proofs (List[Proof]): List of proofs to check.
+
+        Returns:
+            List[bool]: List of which proof is still spendable (True if still spendable, else False)
+            List[bool]: List of which proof are pending (True if pending, else False)
+        """
+        spendable = [self._check_spendable(p) for p in proofs]
+        pending = await self._check_pending(proofs)
+        return spendable, pending
+
+    async def _set_proofs_pending(
+        self, proofs: List[Proof], conn: Optional[Connection] = None
+    ) -> None:
+        """If none of the proofs is in the pending table (_validate_proofs_pending), adds proofs to
+        the list of pending proofs or removes them. Used as a mutex for proofs.
+
+        Args:
+            proofs (List[Proof]): Proofs to add to pending table.
+
+        Raises:
+            Exception: At least one proof already in pending table.
+        """
+        # first we check whether these proofs are pending aready
+        async with self.proofs_pending_lock:
+            await self._validate_proofs_pending(proofs, conn)
+            for p in proofs:
+                try:
+                    await self.crud.set_proof_pending(proof=p, db=self.db, conn=conn)
+                except Exception:
+                    raise TransactionError("proofs already pending.")
+
+    async def _unset_proofs_pending(
+        self, proofs: List[Proof], conn: Optional[Connection] = None
+    ) -> None:
+        """Deletes proofs from pending table.
+
+        Args:
+            proofs (List[Proof]): Proofs to delete.
+        """
+        async with self.proofs_pending_lock:
+            for p in proofs:
+                await self.crud.unset_proof_pending(proof=p, db=self.db, conn=conn)
+
+    async def _validate_proofs_pending(
+        self, proofs: List[Proof], conn: Optional[Connection] = None
+    ) -> None:
+        """Checks if any of the provided proofs is in the pending proofs table.
+
+        Args:
+            proofs (List[Proof]): Proofs to check.
+
+        Raises:
+            Exception: At least one of the proofs is in the pending table.
+        """
+        proofs_pending = await self.crud.get_proofs_pending(db=self.db, conn=conn)
+        for p in proofs:
+            for pp in proofs_pending:
+                if p.secret == pp.secret:
+                    raise TransactionError("proofs are pending.")

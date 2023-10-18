@@ -23,10 +23,10 @@ env = Env()
 env.read_env()
 
 ledger = Ledger(
-    db=db,
+    db=db,  # type: ignore
     seed=env.str("CASHU_PRIVATE_KEY", default="SuperSecretPrivateKey"),
     derivation_path="0/0/0/1",
-    lightning=Wallet,
+    lightning=Wallet,  # type: ignore
 )
 
 cashu_ext: APIRouter = APIRouter(prefix="/cashu", tags=["cashu"])

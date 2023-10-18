@@ -9,8 +9,6 @@ from loguru import logger
 from ..core.db import Database
 from ..core.migrations import migrate_databases
 from ..core.settings import settings
-from ..lightning.fake import FakeWallet  # type: ignore
-from ..lightning.lnbits import LNbitsWallet  # type: ignore
 from ..mint import migrations
 from ..mint.ledger import Ledger
 
@@ -55,7 +53,8 @@ async def start_mint_init():
         error_message, balance = await ledger.lightning.status()
         if error_message:
             logger.warning(
-                f"The backend for {ledger.lightning.__class__.__name__} isn't working properly: '{error_message}'",
+                f"The backend for {ledger.lightning.__class__.__name__} isn't working"
+                f" properly: '{error_message}'",
                 RuntimeWarning,
             )
         logger.info(f"Lightning balance: {balance} msat")
