@@ -1,10 +1,8 @@
 import base64
-import getpass
 from hashlib import md5
 
 from Cryptodome import Random
 from Cryptodome.Cipher import AES
-from loguru import logger
 
 BLOCK_SIZE = 16
 
@@ -29,7 +27,7 @@ class AESCipher:
         return data + (chr(length) * length).encode()
 
     def unpad(self, data):
-        return data[: -(data[-1] if type(data[-1]) == int else ord(data[-1]))]
+        return data[: -(data[-1] if isinstance(data[-1], int) else ord(data[-1]))]
 
     def bytes_to_key(self, data, salt, output=48):
         # extended from https://gist.github.com/gsakkis/4546068

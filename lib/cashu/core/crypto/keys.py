@@ -1,7 +1,7 @@
 import base64
 import hashlib
 import random
-from typing import Dict, List
+from typing import Dict
 
 from ..settings import settings
 from .secp import PrivateKey, PublicKey
@@ -58,5 +58,5 @@ def derive_keyset_id(keys: Dict[int, PublicKey]):
 def random_hash() -> str:
     """Returns a base64-urlsafe encoded random hash."""
     return base64.urlsafe_b64encode(
-        bytes([random.getrandbits(8) for i in range(32)])
+        bytes([random.getrandbits(8) for i in range(30)])
     ).decode()

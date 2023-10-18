@@ -20,6 +20,7 @@ from starlette.exceptions import HTTPException
 
 from . import cashu_ext, ledger
 from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
+from .lib.cashu.core.helpers import sum_proofs
 
 # -------- cashu imports
 from .lib.cashu.core.base import (
@@ -346,7 +347,7 @@ async def mint(
     name="Melt tokens",
     summary="Melt tokens for a Bitcoin payment that the mint will make for the user in exchange",
 )
-async def melt_coins(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
+async def melt(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
     """Invalidates proofs and pays a Lightning invoice."""
     cashu: Union[None, Cashu] = await get_cashu(cashu_id)
     if cashu is None:
@@ -355,6 +356,7 @@ async def melt_coins(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse
         )
     proofs = payload.proofs
     invoice = payload.pr
+    outputs = payload.outputs
 
     # !!!!!!! MAKE SURE THAT PROOFS ARE ONLY FROM THIS CASHU KEYSET ID
     # THIS IS NECESSARY BECAUSE THE CASHU BACKEND WILL ACCEPT ANY VALID
@@ -367,57 +369,55 @@ async def melt_coins(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse
     # set proofs as pending
     await ledger._set_proofs_pending(proofs)
     try:
-        await ledger._verify_proofs_and_outputs(proofs)
-
-        total_provided = sum([p["amount"] for p in proofs])
+        total_provided = sum_proofs(proofs)
         invoice_obj = bolt11.decode(invoice)
-        assert invoice_obj.amount_msat, Exception("Invoice amount is zero.")
-        amount = math.ceil(invoice_obj.amount_msat / 1000)
-
+        assert invoice_obj.amount_msat, "invoice has no amount."
+        invoice_amount = math.ceil(invoice_obj.amount_msat / 1000)
         internal_checking_id = await check_internal(invoice_obj.payment_hash)
-
         if not internal_checking_id:
-            fees_msat = fee_reserve(invoice_obj.amount_msat)
+            reserve_fees_sat = int(fee_reserve(invoice_obj.amount_msat) / 1000)
         else:
-            fees_msat = 0
-        assert total_provided >= amount + math.ceil(fees_msat / 1000), Exception(
-            f"Provided proofs ({total_provided} sats) not enough for Lightning payment ({amount + math.ceil(fees_msat / 1000)} sats)."
+            reserve_fees_sat = 0
+        # verify overspending attempt
+        assert total_provided >= invoice_amount + reserve_fees_sat, Exception(
+            "provided proofs not enough for Lightning payment. Provided:"
+            f" {total_provided}, needed: {invoice_amount + reserve_fees_sat}"
         )
+        # verify spending inputs and their spending conditions
+        await ledger.verify_inputs_and_outputs(proofs)
+
         logger.debug(f"Cashu: Initiating payment of {total_provided} sats")
-        try:
-            await pay_invoice(
-                wallet_id=cashu.wallet,
-                payment_request=invoice,
-                description="Pay Cashu invoice",
-                extra={"tag": "cashu", "cashu_name": cashu.name},
+        await pay_invoice(
+            wallet_id=cashu.wallet,
+            payment_request=invoice,
+            description="Pay Cashu invoice",
+            extra={"tag": "cashu", "cashu_name": cashu.name},
+        )
+        logger.debug(
+            f"Cashu: Wallet {cashu.wallet} checking PaymentStatus of {invoice_obj.payment_hash}"
+        )
+        status: PaymentStatus = await check_transaction_status(
+            cashu.wallet, invoice_obj.payment_hash
+        )
+        paid_fee_msat = status.fee_msat
+
+        if not status.paid:
+            raise Exception(f"Cashu: Payment failed for {invoice_obj.payment_hash}")
+
+        logger.debug(
+            f"Cashu: Payment successful, invalidating proofs for {invoice_obj.payment_hash}"
+        )
+        await ledger._invalidate_proofs(proofs)
+
+        # prepare change to compensate wallet for overpaid fees
+        return_promises: List[BlindedSignature] = []
+        if outputs and paid_fee_msat is not None:
+            return_promises = await ledger._generate_change_promises(
+                total_provided=total_provided,
+                invoice_amount=invoice_amount,
+                ln_fee_msat=paid_fee_msat,
+                outputs=outputs,
             )
-            logger.debug(
-                f"Cashu: Wallet {cashu.wallet} checking PaymentStatus of {invoice_obj.payment_hash}"
-            )
-            status: PaymentStatus = await check_transaction_status(
-                cashu.wallet, invoice_obj.payment_hash
-            )
-            return_promises = None
-            if status.paid is True:
-                logger.debug(
-                    f"Cashu: Payment successful, invalidating proofs for {invoice_obj.payment_hash}"
-                )
-                await ledger._invalidate_proofs(proofs)
-                # prepare change to compensate wallet for overpaid fees
-                if status.fee_msat is not None and payload.outputs:
-                    keyset = ledger.keysets.keysets[cashu.keyset_id]
-                    return_promises = await ledger._generate_change_promises(
-                        total_provided=total_provided,
-                        invoice_amount=amount,
-                        ln_fee_msat=status.fee_msat,
-                        outputs=payload.outputs,
-                        keyset=keyset,
-                    )
-            else:
-                raise Exception(f"Cashu: Payment failed for {invoice_obj.payment_hash}")
-        except Exception as e:
-            logger.debug(f"Cashu error paying invoice {invoice_obj.payment_hash}: {e}")
-            raise e
     except Exception as e:
         logger.debug(f"Cashu /melt: Exception: {str(e)}")
         raise HTTPException(
