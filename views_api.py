@@ -361,9 +361,13 @@ async def melt(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
     # !!!!!!! MAKE SURE THAT PROOFS ARE ONLY FROM THIS CASHU KEYSET ID
     # THIS IS NECESSARY BECAUSE THE CASHU BACKEND WILL ACCEPT ANY VALID
     # TOKENS
-    assert all(
-        [p.id in [cashu.keyset_id, ledger.keyset.id] for p in proofs]
-    ), HTTPException(
+    accepted_keysets = [cashu.keyset_id]
+    if ledger.master_key:
+        # NOTE: bug fix, fee return tokens for v 0.3.1 are from the master keyset
+        # we need to accept them but only if a master keyset is set, otherwise it's unsafe
+        # to accept them.
+        accepted_keysets += [ledger.keyset.id]
+    assert all([p.id in accepted_keysets for p in proofs]), HTTPException(
         status_code=HTTPStatus.METHOD_NOT_ALLOWED,
         detail="Error: Tokens are from another mint.",
     )
@@ -503,9 +507,13 @@ async def split(
     # !!!!!!! MAKE SURE THAT PROOFS ARE ONLY FROM THIS CASHU KEYSET ID
     # THIS IS NECESSARY BECAUSE THE CASHU BACKEND WILL ACCEPT ANY VALID
     # TOKENS
-    assert all(
-        [p.id in [cashu.keyset_id, ledger.keyset.id] for p in proofs]
-    ), HTTPException(
+    accepted_keysets = [cashu.keyset_id]
+    if ledger.master_key:
+        # NOTE: bug fix, fee return tokens for v 0.3.1 are from the master keyset
+        # we need to accept them but only if a master keyset is set, otherwise it's unsafe
+        # to accept them.
+        accepted_keysets += [ledger.keyset.id]
+    assert all([p.id in accepted_keysets for p in proofs]), HTTPException(
         status_code=HTTPStatus.METHOD_NOT_ALLOWED,
         detail="Error: Tokens are from another mint.",
     )
