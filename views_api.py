@@ -143,7 +143,7 @@ async def info(cashu_id: str):
         )
     extension_info = await get_installed_extension("cashu")
     if extension_info:
-        installed_version = extension_info.get("version")
+        installed_version = extension_info.installed_version
     else:
         installed_version = "unknown"
     return GetInfoResponse(
@@ -361,7 +361,9 @@ async def melt(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
     # !!!!!!! MAKE SURE THAT PROOFS ARE ONLY FROM THIS CASHU KEYSET ID
     # THIS IS NECESSARY BECAUSE THE CASHU BACKEND WILL ACCEPT ANY VALID
     # TOKENS
-    assert all([p.id == cashu.keyset_id for p in proofs]), HTTPException(
+    assert all(
+        [p.id in [cashu.keyset_id, ledger.keyset.id] for p in proofs]
+    ), HTTPException(
         status_code=HTTPStatus.METHOD_NOT_ALLOWED,
         detail="Error: Tokens are from another mint.",
     )
@@ -412,11 +414,13 @@ async def melt(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
         # prepare change to compensate wallet for overpaid fees
         return_promises: List[BlindedSignature] = []
         if outputs and paid_fee_msat is not None:
+            keyset = ledger.keysets.keysets[cashu.keyset_id]
             return_promises = await ledger._generate_change_promises(
                 total_provided=total_provided,
                 invoice_amount=invoice_amount,
                 ln_fee_msat=paid_fee_msat,
                 outputs=outputs,
+                keyset=keyset,
             )
     except Exception as e:
         logger.debug(f"Cashu /melt: Exception: {str(e)}")
@@ -499,11 +503,12 @@ async def split(
     # !!!!!!! MAKE SURE THAT PROOFS ARE ONLY FROM THIS CASHU KEYSET ID
     # THIS IS NECESSARY BECAUSE THE CASHU BACKEND WILL ACCEPT ANY VALID
     # TOKENS
-    if not all([p.id == cashu.keyset_id for p in proofs]):
-        raise HTTPException(
-            status_code=HTTPStatus.METHOD_NOT_ALLOWED,
-            detail="Error: Tokens are from another mint.",
-        )
+    assert all(
+        [p.id in [cashu.keyset_id, ledger.keyset.id] for p in proofs]
+    ), HTTPException(
+        status_code=HTTPStatus.METHOD_NOT_ALLOWED,
+        detail="Error: Tokens are from another mint.",
+    )
 
     assert payload.outputs, Exception("no outputs provided.")
     try:
