@@ -286,6 +286,7 @@ async def mint(
     # END: backwards compatibility < 0.12
 
     keyset = ledger.keysets.keysets[cashu.keyset_id]
+    assert keyset.id == cashu.keyset_id, "Keyset IDs do not match"
 
     if LIGHTNING:
         ledger.locks[hash] = (
@@ -357,7 +358,8 @@ async def melt(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
     proofs = payload.proofs
     invoice = payload.pr
     outputs = payload.outputs
-
+    keyset = ledger.keysets.keysets[cashu.keyset_id]
+    assert keyset.id == cashu.keyset_id, "Keyset IDs do not match"
     # !!!!!!! MAKE SURE THAT PROOFS ARE ONLY FROM THIS CASHU KEYSET ID
     # THIS IS NECESSARY BECAUSE THE CASHU BACKEND WILL ACCEPT ANY VALID
     # TOKENS
@@ -495,6 +497,8 @@ async def split(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
     proofs = payload.proofs
+    keyset = ledger.keysets.keysets[cashu.keyset_id]
+    assert keyset.id == cashu.keyset_id, "Keyset IDs do not match"
 
     # !!!!!!! MAKE SURE THAT PROOFS ARE ONLY FROM THIS CASHU KEYSET ID
     # THIS IS NECESSARY BECAUSE THE CASHU BACKEND WILL ACCEPT ANY VALID
@@ -507,7 +511,6 @@ async def split(
 
     assert payload.outputs, Exception("no outputs provided.")
     try:
-        keyset = ledger.keysets.keysets[cashu.keyset_id]
         promises = await ledger.split(
             proofs=payload.proofs,
             outputs=payload.outputs,
