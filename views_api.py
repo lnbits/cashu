@@ -35,12 +35,12 @@ def fee_reserve_internal(amount_msat: int) -> int:
     """
     Calculates the fee reserve in sat for a given amount in msat.
     """
-    fee_reserve = math.ceil(fee_reserve(amount_msat) / 1000)
+    fee_reserve_sat = math.ceil(fee_reserve(amount_msat) / 1000)
     if service_fee_present:
-        return fee_reserve + math.ceil(service_fee(amount_msat) / 1000)
+        return fee_reserve_sat + math.ceil(service_fee(amount_msat) / 1000)
     else:
         # fallback to 0.5% if service_fee is not present
-        return fee_reserve + math.ceil(amount_msat * 0.005 / 1000)
+        return fee_reserve_sat + math.ceil(amount_msat * 0.005 / 1000)
 
 
 # -------- cashu imports
