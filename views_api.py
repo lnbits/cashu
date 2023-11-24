@@ -5,7 +5,7 @@ from typing import Dict, List, Union
 
 from fastapi import Depends, Query
 from lnbits import bolt11
-from lnbits.core.crud import check_internal, get_installed_extension, get_user
+from lnbits.core.crud import get_standalone_payment, get_installed_extension, get_user
 from lnbits.core.services import (
     check_transaction_status,
     create_invoice,
@@ -21,6 +21,27 @@ from starlette.exceptions import HTTPException
 from . import cashu_ext, ledger
 from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
 from .lib.cashu.core.helpers import sum_proofs
+
+# try to import service_fee from lnbits.core.services but fallback to 0.5% if it doesn't exist
+service_fee_present = True
+try:
+    from lnbits.core.services import service_fee
+except ImportError:
+    logger.warning("Cashu: could not import service_fee from lnbits.core.services")
+    service_fee_present = False
+
+
+def fee_reserve_internal(amount_msat: int) -> int:
+    """
+    Calculates the fee reserve in sat for a given amount in msat.
+    """
+    fee_reserve = math.ceil(fee_reserve(amount_msat) / 1000)
+    if service_fee_present:
+        return fee_reserve + math.ceil(service_fee(amount_msat) / 1000)
+    else:
+        # fallback to 0.5% if service_fee is not present
+        return fee_reserve + math.ceil(amount_msat * 0.005 / 1000)
+
 
 # -------- cashu imports
 from .lib.cashu.core.base import (
@@ -379,11 +400,9 @@ async def melt(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
         invoice_obj = bolt11.decode(invoice)
         assert invoice_obj.amount_msat, "invoice has no amount."
         invoice_amount = math.ceil(invoice_obj.amount_msat / 1000)
-        internal_checking_id = await check_internal(invoice_obj.payment_hash)
-        if not internal_checking_id:
-            reserve_fees_sat = int(fee_reserve(invoice_obj.amount_msat) / 1000)
-        else:
-            reserve_fees_sat = 0
+
+        reserve_fees_sat = fee_reserve_internal(invoice_obj.amount_msat)
+
         # verify overspending attempt
         assert total_provided >= invoice_amount + reserve_fees_sat, Exception(
             "provided proofs not enough for Lightning payment. Provided:"
@@ -405,7 +424,6 @@ async def melt(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
         status: PaymentStatus = await check_transaction_status(
             cashu.wallet, invoice_obj.payment_hash
         )
-        paid_fee_msat = status.fee_msat
 
         if not status.paid:
             raise Exception(f"Cashu: Payment failed for {invoice_obj.payment_hash}")
@@ -414,6 +432,11 @@ async def melt(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
             f"Cashu: Payment successful, invalidating proofs for {invoice_obj.payment_hash}"
         )
         await ledger._invalidate_proofs(proofs)
+
+        # get the actual paid fees from the db entry
+        payment = await get_standalone_payment(invoice_obj.payment_hash)
+        assert payment, Exception("Payment not found.")
+        paid_fee_msat = payment.fee
 
         # prepare change to compensate wallet for overpaid fees
         return_promises: List[BlindedSignature] = []
@@ -476,13 +499,9 @@ async def check_fees(payload: CheckFeesRequest, cashu_id: str) -> CheckFeesRespo
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
     invoice_obj = bolt11.decode(payload.pr)
-    internal_checking_id = await check_internal(invoice_obj.payment_hash)
     assert invoice_obj.amount_msat, Exception("Invoice amount is zero.")
-    if not internal_checking_id:
-        fees_msat = fee_reserve(invoice_obj.amount_msat)
-    else:
-        fees_msat = 0
-    return CheckFeesResponse(fee=math.ceil(fees_msat / 1000))
+    fees_sat = fee_reserve_internal(invoice_obj.amount_msat)
+    return CheckFeesResponse(fee=fees_sat)
 
 
 @cashu_ext.post(
