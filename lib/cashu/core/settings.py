@@ -1,7 +1,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from environs import Env  # type: ignore
 from pydantic import BaseSettings, Extra, Field
@@ -44,6 +44,7 @@ class EnvSettings(CashuSettings):
     debug: bool = Field(default=False)
     log_level: str = Field(default="INFO")
     cashu_dir: str = Field(default=os.path.join(str(Path.home()), ".cashu"))
+    debug_profiling: bool = Field(default=False)
 
 
 class MintSettings(CashuSettings):
@@ -56,9 +57,12 @@ class MintSettings(CashuSettings):
     mint_peg_out_only: bool = Field(default=False)
     mint_max_peg_in: int = Field(default=None)
     mint_max_peg_out: int = Field(default=None)
+    mint_max_balance: int = Field(default=None)
 
     mint_lnbits_endpoint: str = Field(default=None)
     mint_lnbits_key: str = Field(default=None)
+
+    mint_cache_secrets: bool = Field(default=True)
 
 
 class MintInformation(CashuSettings):
@@ -99,8 +103,24 @@ class WalletSettings(CashuSettings):
     locktime_delta_seconds: int = Field(default=86400)  # 1 day
 
 
+class LndRestFundingSource(MintSettings):
+    mint_lnd_rest_endpoint: Optional[str] = Field(default=None)
+    mint_lnd_rest_cert: Optional[str] = Field(default=None)
+    mint_lnd_rest_macaroon: Optional[str] = Field(default=None)
+    mint_lnd_rest_admin_macaroon: Optional[str] = Field(default=None)
+    mint_lnd_rest_invoice_macaroon: Optional[str] = Field(default=None)
+
+
+class CoreLightningRestFundingSource(MintSettings):
+    mint_corelightning_rest_url: Optional[str] = Field(default=None)
+    mint_corelightning_rest_macaroon: Optional[str] = Field(default=None)
+    mint_corelightning_rest_cert: Optional[str] = Field(default=None)
+
+
 class Settings(
     EnvSettings,
+    LndRestFundingSource,
+    CoreLightningRestFundingSource,
     MintSettings,
     MintInformation,
     WalletSettings,

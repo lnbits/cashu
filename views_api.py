@@ -21,6 +21,7 @@ from starlette.exceptions import HTTPException
 from . import cashu_ext, ledger
 from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
 from .lib.cashu.core.helpers import sum_proofs
+from .lib.cashu.core.crypto.keys import random_hash
 
 # try to import service_fee from lnbits.core.services but fallback to 0.5% if it doesn't exist
 service_fee_present = True
@@ -265,7 +266,11 @@ async def request_mint(cashu_id: str, amount: int = 0) -> GetMintResponse:
             extra={"tag": "cashu"},
         )
         invoice = Invoice(
-            amount=amount, pr=payment_request, hash=payment_hash, issued=False
+            amount=amount,
+            bolt11=payment_request,
+            id=random_hash(),
+            payment_hash=payment_hash,
+            issued=False,
         )
         # await store_lightning_invoice(cashu_id, invoice)
         await ledger.crud.store_lightning_invoice(invoice=invoice, db=ledger.db)
@@ -274,8 +279,7 @@ async def request_mint(cashu_id: str, amount: int = 0) -> GetMintResponse:
         raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e))
 
     print(f"Lightning invoice: {payment_request}")
-    resp = GetMintResponse(pr=payment_request, hash=payment_hash)
-    #     return {"pr": payment_request, "hash": payment_hash}
+    resp = GetMintResponse(pr=invoice.bolt11, hash=invoice.id)
     return resp
 
 
@@ -303,17 +307,17 @@ async def mint(
         )
     # BEGIN: backwards compatibility < 0.12 where we used to lookup payments with payment_hash
     # We use the payment_hash to lookup the hash from the database and pass that one along.
-    hash = payment_hash or hash
+    id = payment_hash or hash
     # END: backwards compatibility < 0.12
 
     keyset = ledger.keysets.keysets[cashu.keyset_id]
 
     if LIGHTNING:
-        ledger.locks[hash] = (
-            ledger.locks.get(hash) or asyncio.Lock()
+        ledger.locks[id] = (
+            ledger.locks.get(id) or asyncio.Lock()
         )  # create a new lock if it doesn't exist
-        async with ledger.locks[hash]:
-            invoice = await ledger.crud.get_lightning_invoice(db=ledger.db, hash=hash)
+        async with ledger.locks[id]:
+            invoice = await ledger.crud.get_lightning_invoice(db=ledger.db, id=id)
             if invoice is None:
                 raise HTTPException(
                     status_code=HTTPStatus.NOT_FOUND,
@@ -325,13 +329,13 @@ async def mint(
                     detail="Tokens already issued for this invoice.",
                 )
             # set this invoice as issued
-            await ledger.crud.update_lightning_invoice(
-                db=ledger.db, hash=hash, issued=True
-            )
-        del ledger.locks[hash]
+            await ledger.crud.update_lightning_invoice(db=ledger.db, id=id, issued=True)
+        del ledger.locks[id]
 
         try:
-            status: PaymentStatus = await check_transaction_status(cashu.wallet, hash)
+            status: PaymentStatus = await check_transaction_status(
+                cashu.wallet, invoice.payment_hash
+            )
             total_requested = sum([bm.amount for bm in data.outputs])
             if total_requested > invoice.amount:
                 raise HTTPException(
@@ -350,7 +354,7 @@ async def mint(
             logger.debug(f"Cashu: /mint {str(e) or getattr(e, 'detail')}")
             # unset issued flag because something went wrong
             await ledger.crud.update_lightning_invoice(
-                db=ledger.db, hash=hash, issued=False
+                db=ledger.db, id=id, issued=False
             )
             raise HTTPException(
                 status_code=getattr(e, "status_code")
@@ -544,7 +548,6 @@ async def split(
             proofs=payload.proofs,
             outputs=payload.outputs,
             keyset=keyset,
-            amount=payload.amount,
         )
     except Exception as exc:
         raise HTTPException(

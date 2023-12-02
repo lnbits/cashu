@@ -88,27 +88,33 @@ class Proof(BaseModel):
     time_created: Union[None, str] = ""
     time_reserved: Union[None, str] = ""
     derivation_path: Union[None, str] = ""  # derivation path of the proof
+    mint_id: Union[None, str] = (
+        None  # holds the id of the mint operation that created this proof
+    )
+    melt_id: Union[None, str] = (
+        None  # holds the id of the melt operation that destroyed this proof
+    )
 
     @classmethod
     def from_dict(cls, proof_dict: dict):
-        if proof_dict.get("dleq"):
+        if proof_dict.get("dleq") and isinstance(proof_dict["dleq"], str):
             proof_dict["dleq"] = DLEQWallet(**json.loads(proof_dict["dleq"]))
         c = cls(**proof_dict)
         return c
 
     def to_dict(self, include_dleq=False):
-        # dictionary without the fields that don't need to be send to Carol
-        if not include_dleq:
-            return dict(id=self.id, amount=self.amount, secret=self.secret, C=self.C)
+        # necessary fields
+        return_dict = dict(id=self.id, amount=self.amount, secret=self.secret, C=self.C)
 
-        assert self.dleq, "DLEQ proof is missing"
-        return dict(
-            id=self.id,
-            amount=self.amount,
-            secret=self.secret,
-            C=self.C,
-            dleq=self.dleq.dict(),
-        )
+        # optional fields
+        if include_dleq:
+            assert self.dleq, "DLEQ proof is missing"
+            return_dict["dleq"] = self.dleq.dict()  # type: ignore
+
+        if self.witness:
+            return_dict["witness"] = self.witness
+
+        return return_dict
 
     def to_dict_no_dleq(self):
         # dictionary without the fields that don't need to be send to Carol
@@ -126,17 +132,12 @@ class Proof(BaseModel):
 
     @property
     def p2pksigs(self) -> List[str]:
-        assert self.witness, "Witness is missing"
+        assert self.witness, "Witness is missing for p2pk signature"
         return P2PKWitness.from_witness(self.witness).signatures
 
     @property
-    def p2shscript(self) -> P2SHWitness:
-        assert self.witness, "Witness is missing"
-        return P2SHWitness.from_witness(self.witness)
-
-    @property
     def htlcpreimage(self) -> Union[str, None]:
-        assert self.witness, "Witness is missing"
+        assert self.witness, "Witness is missing for htlc preimage"
         return HTLCWitness.from_witness(self.witness).preimage
 
 
@@ -156,7 +157,7 @@ class BlindedMessage(BaseModel):
 
     @property
     def p2pksigs(self) -> List[str]:
-        assert self.witness, "Witness is missing"
+        assert self.witness, "Witness missing in output"
         return P2PKWitness.from_witness(self.witness).signatures
 
 
@@ -181,8 +182,9 @@ class BlindedMessages(BaseModel):
 
 class Invoice(BaseModel):
     amount: int
-    pr: str
-    hash: str
+    bolt11: str
+    id: str
+    out: Union[None, bool] = None
     payment_hash: Union[None, str] = None
     preimage: Union[str, None] = None
     issued: Union[None, bool] = False
@@ -346,6 +348,11 @@ class WalletKeyset:
         self.public_keys = public_keys
         # overwrite id by deriving it from the public keys
         self.id = derive_keyset_id(self.public_keys)
+        logger.trace(f"Derived keyset id {self.id} from public keys.")
+        if id and id != self.id:
+            logger.warning(
+                f"WARNING: Keyset id {self.id} does not match the given id {id}."
+            )
 
     def serialize(self):
         return json.dumps(
@@ -354,9 +361,9 @@ class WalletKeyset:
 
     @classmethod
     def from_row(cls, row: Row):
-        def deserialize(serialized: str):
+        def deserialize(serialized: str) -> Dict[int, PublicKey]:
             return {
-                amount: PublicKey(bytes.fromhex(hex_key), raw=True)
+                int(amount): PublicKey(bytes.fromhex(hex_key), raw=True)
                 for amount, hex_key in dict(json.loads(serialized)).items()
             }
 
