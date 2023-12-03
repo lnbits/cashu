@@ -305,6 +305,9 @@ async def mint(
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
+
+    await ledger._verify_outputs(data.outputs)
+
     # BEGIN: backwards compatibility < 0.12 where we used to lookup payments with payment_hash
     # We use the payment_hash to lookup the hash from the database and pass that one along.
     id = payment_hash or hash
@@ -312,59 +315,50 @@ async def mint(
 
     keyset = ledger.keysets.keysets[cashu.keyset_id]
 
-    if LIGHTNING:
-        ledger.locks[id] = (
-            ledger.locks.get(id) or asyncio.Lock()
-        )  # create a new lock if it doesn't exist
-        async with ledger.locks[id]:
-            invoice = await ledger.crud.get_lightning_invoice(db=ledger.db, id=id)
-            if invoice is None:
-                raise HTTPException(
-                    status_code=HTTPStatus.NOT_FOUND,
-                    detail="Mint does not know this invoice.",
-                )
-            if invoice.issued:
-                raise HTTPException(
-                    status_code=HTTPStatus.PAYMENT_REQUIRED,
-                    detail="Tokens already issued for this invoice.",
-                )
-            # set this invoice as issued
-            await ledger.crud.update_lightning_invoice(db=ledger.db, id=id, issued=True)
-        del ledger.locks[id]
-
-        try:
-            status: PaymentStatus = await check_transaction_status(
-                cashu.wallet, invoice.payment_hash
-            )
-            total_requested = sum([bm.amount for bm in data.outputs])
-            if total_requested > invoice.amount:
-                raise HTTPException(
-                    status_code=HTTPStatus.PAYMENT_REQUIRED,
-                    detail=f"Requested amount too high: {total_requested}. Invoice amount: {invoice.amount}",
-                )
-
-            if not status.paid:
-                raise HTTPException(
-                    status_code=HTTPStatus.PAYMENT_REQUIRED, detail="Invoice not paid."
-                )
-
-            promises = await ledger._generate_promises(B_s=data.outputs, keyset=keyset)
-            return PostMintResponse(promises=promises)
-        except (Exception, HTTPException) as e:
-            logger.debug(f"Cashu: /mint {str(e) or getattr(e, 'detail')}")
-            # unset issued flag because something went wrong
-            await ledger.crud.update_lightning_invoice(
-                db=ledger.db, id=id, issued=False
-            )
+    ledger.locks[id] = (
+        ledger.locks.get(id) or asyncio.Lock()
+    )  # create a new lock if it doesn't exist
+    async with ledger.locks[id]:
+        invoice = await ledger.crud.get_lightning_invoice(db=ledger.db, id=id)
+        if invoice is None:
             raise HTTPException(
-                status_code=getattr(e, "status_code")
-                or HTTPStatus.INTERNAL_SERVER_ERROR,
-                detail=str(e) or getattr(e, "detail"),
+                status_code=HTTPStatus.NOT_FOUND,
+                detail="Mint does not know this invoice.",
             )
-    else:
-        # only used for testing when LIGHTNING=false
+        if invoice.issued:
+            raise HTTPException(
+                status_code=HTTPStatus.PAYMENT_REQUIRED,
+                detail="Tokens already issued for this invoice.",
+            )
+        # set this invoice as issued
+        await ledger.crud.update_lightning_invoice(db=ledger.db, id=id, issued=True)
+    del ledger.locks[id]
+
+    try:
+        total_requested = sum([bm.amount for bm in data.outputs])
+        if total_requested > invoice.amount:
+            raise HTTPException(
+                status_code=HTTPStatus.PAYMENT_REQUIRED,
+                detail=f"Requested amount too high: {total_requested}. Invoice amount: {invoice.amount}",
+            )
+        status: PaymentStatus = await check_transaction_status(
+            cashu.wallet, invoice.payment_hash
+        )
+        if not status.paid:
+            raise HTTPException(
+                status_code=HTTPStatus.PAYMENT_REQUIRED, detail="Invoice not paid."
+            )
         promises = await ledger._generate_promises(B_s=data.outputs, keyset=keyset)
-        return PostMintResponse(promises=promises)
+    except (Exception, HTTPException) as e:
+        logger.debug(f"Cashu: /mint {str(e) or getattr(e, 'detail')}")
+        # unset issued flag because something went wrong
+        await ledger.crud.update_lightning_invoice(db=ledger.db, id=id, issued=False)
+        raise HTTPException(
+            status_code=getattr(e, "status_code") or HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail=str(e) or getattr(e, "detail"),
+        )
+
+    return PostMintResponse(promises=promises)
 
 
 @cashu_ext.post(
@@ -412,6 +406,9 @@ async def melt(payload: PostMeltRequest, cashu_id: str) -> GetMeltResponse:
             "provided proofs not enough for Lightning payment. Provided:"
             f" {total_provided}, needed: {invoice_amount + reserve_fees_sat}"
         )
+        # verify outputs
+        await ledger._verify_outputs(outputs)
+
         # verify spending inputs and their spending conditions
         await ledger.verify_inputs_and_outputs(proofs)
 
