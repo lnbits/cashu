@@ -54,7 +54,8 @@ import hashlib
 from typing import Optional, Tuple
 
 from blspy import AugSchemeMPL, G1Element, G2Element, PrivateKey
-from py_ecc.bls import G2ProofOfPossession as bls_pop
+
+# from py_ecc.bls import G2ProofOfPossession as bls_pop
 from secp256k1 import PrivateKey, PublicKey
 
 
@@ -177,74 +178,72 @@ def carol_verify_dleq(
 
 import time
 
-private_key = 5566
-now = time.time()
-print("generating key")
-public_key = bls_pop.SkToPk(private_key)
-print(f"took {time.time()-now}")
-message = b"\xab" * 32  # The message to be signed
+# private_key = 5566
+# now = time.time()
+# print("generating key")
+# public_key = bls_pop.SkToPk(private_key)
+# print(f"took {time.time()-now}")
+# message = b"\xab" * 32  # The message to be signed
 
-# Signing
-print("Signing")
-now = time.time()
+# # Signing
+# print("Signing")
+# now = time.time()
 
-signature = bls_pop.Sign(private_key, message)
-print(f"took {time.time()-now}")
-print("verifying")
-# Verifying
-now = time.time()
+# signature = bls_pop.Sign(private_key, message)
+# print(f"took {time.time()-now}")
+# print("verifying")
+# # Verifying
+# now = time.time()
 
-assert bls_pop.Verify(public_key, message, signature)
-print("done")
-print(f"took {time.time()-now}")
+# assert bls_pop.Verify(public_key, message, signature)
+# print("done")
+# print(f"took {time.time()-now}")
 
 
 # Example seed, used to generate private key. Always use
 # a secure RNG with sufficient entropy to generate a seed (at least 32 bytes).
-seed: bytes = bytes(
-    [
-        0,
-        50,
-        6,
-        244,
-        24,
-        199,
-        1,
-        25,
-        52,
-        88,
-        192,
-        19,
-        18,
-        12,
-        89,
-        6,
-        220,
-        18,
-        102,
-        58,
-        209,
-        82,
-        12,
-        62,
-        89,
-        110,
-        182,
-        9,
-        44,
-        20,
-        254,
-        22,
-    ]
-)
+seed: bytes = bytes([
+    0,
+    50,
+    6,
+    244,
+    24,
+    199,
+    1,
+    25,
+    52,
+    88,
+    192,
+    19,
+    18,
+    12,
+    89,
+    6,
+    220,
+    18,
+    102,
+    58,
+    209,
+    82,
+    12,
+    62,
+    89,
+    110,
+    182,
+    9,
+    44,
+    20,
+    254,
+    22,
+])
 sk: PrivateKey = AugSchemeMPL.key_gen(seed)
-pk: G1Element = sk.get_g1()
+pk: G1Element = sk.get_g1()  # type: ignore
 
-message: bytes = bytes([1, 2, 3, 4, 5])
+message: bytes = bytes([1, 2, 3, 4, 5])  # type: ignore
 print("signing")
 now = time.time()
 
-signature: G2Element = AugSchemeMPL.sign(sk, message)
+signature: G2Element = AugSchemeMPL.sign(sk, message)  # type: ignore
 print(f"took {time.time()-now}")
 
 print("verifying")

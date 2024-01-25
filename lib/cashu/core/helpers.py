@@ -3,12 +3,16 @@ import math
 from functools import partial, wraps
 from typing import List
 
-from ..core.base import Proof
+from ..core.base import BlindedSignature, Proof
 from ..core.settings import settings
 
 
 def sum_proofs(proofs: List[Proof]):
     return sum([p.amount for p in proofs])
+
+
+def sum_promises(promises: List[BlindedSignature]):
+    return sum([p.amount for p in promises])
 
 
 def async_wrap(func):
@@ -35,10 +39,8 @@ def async_unwrap(to_await):
     return async_response[0]
 
 
-def fee_reserve(amount_msat: int, internal=False) -> int:
+def fee_reserve(amount_msat: int) -> int:
     """Function for calculating the Lightning fee reserve"""
-    if internal:
-        return 0
     return max(
         int(settings.lightning_reserve_fee_min),
         int(amount_msat * settings.lightning_fee_percent / 100.0),
