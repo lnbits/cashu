@@ -7,6 +7,10 @@ from lnbits.db import Database
 from lnbits.helpers import template_renderer
 from lnbits.tasks import catch_everything_and_restart
 
+from .lib.cashu.core.base import Method, Unit
+from .lib.cashu.mint.crud import LedgerCrudSqlite
+
+
 db = Database("ext_cashu")
 
 
@@ -16,17 +20,22 @@ cashu_static_files = [
         "name": "cashu_static",
     }
 ]
-from .lib.cashu.lightning.base import Wallet
+from .lib.cashu.lightning.base import LightningBackend
 from .lib.cashu.mint.ledger import Ledger
 
 env = Env()
 env.read_env()
 
+backends = {
+    Method.bolt11: {Unit.sat: LightningBackend},
+}
+
 ledger = Ledger(
     db=db,  # type: ignore
     seed=env.str("CASHU_PRIVATE_KEY", default="SuperSecretPrivateKey"),
     derivation_path="0/0/0/1",
-    lightning=Wallet,  # type: ignore
+    backends=backends,
+    crud=LedgerCrudSqlite(),
 )
 
 cashu_ext: APIRouter = APIRouter(prefix="/cashu", tags=["cashu"])
