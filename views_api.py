@@ -1,5 +1,7 @@
 import asyncio
 import math
+import time
+import datetime
 from http import HTTPStatus
 from typing import Dict, List, Union, Any
 
@@ -21,6 +23,8 @@ from starlette.exceptions import HTTPException
 from . import cashu_ext, ledger
 from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
 from .lib.cashu.core.helpers import sum_proofs
+from .lib.cashu.core.errors import CashuError, NotAllowedError, LightningError
+from .lib.cashu.core.settings import settings
 
 # try to import service_fee from lnbits.core.services but fallback to 0.5% if it doesn't exist
 service_fee_present = True
@@ -63,7 +67,36 @@ from .lib.cashu.core.base import (
     PostRestoreResponse,
     PostSplitRequest,
     PostSplitResponse,
+    DLEQ,
+    Amount,
+    BlindedMessage,
+    BlindedSignature,
+    MeltQuote,
+    Method,
+    MintKeyset,
+    MintQuote,
+    PostMeltQuoteRequest,
+    PostMeltQuoteResponse,
+    PostMintQuoteRequest,
+    Proof,
+    ProofState,
+    SpentState,
+    Unit,
 )
+from .lib.cashu.lightning.base import (
+    InvoiceResponse,
+    LightningBackend,
+    PaymentQuoteResponse,
+    PaymentStatus,
+)
+from .lib.cashu.core.crypto.keys import (
+    derive_keyset_id,
+    derive_keyset_id_deprecated,
+    derive_pubkey,
+    random_hash,
+)
+
+
 from .lib.cashu.core.db import lock_table
 from .models import Cashu
 
@@ -111,8 +144,9 @@ async def api_cashu_create(
     cashu_id = urlsafe_short_hash()
 
     # generate a new keyset in cashu
-    keyset_derivation_path = urlsafe_short_hash()
-    keyset = await ledger.load_keyset(derivation_path=keyset_derivation_path)
+    keyset = await ledger.activate_keyset(
+        derivation_path="m/0'/0'/0'", seed=urlsafe_short_hash()
+    )
     assert keyset.id
 
     cashu = await create_cashu(
@@ -217,22 +251,33 @@ async def keys(cashu_id: str):
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
 
-    keyset = ledger.get_keyset(keyset_id=cashu.keyset_id)
-    return KeysResponse.parse_obj(keyset).__root__
+    keyset = ledger.keysets[cashu.keyset_id]
+
+    return KeysResponse(
+        keysets=[
+            KeysResponseKeyset(
+                id=keyset.id,
+                unit=keyset.unit.name,
+                keys={k: v for k, v in keyset.public_keys_hex.items()},
+            )
+        ]
+    )
 
 
 @cashu_ext.get(
-    "/api/v1/{cashu_id}/v1/keys/{idBase64Urlsafe}",
+    "/api/v1/{cashu_id}/v1/keys/{keyset_id}",
     name="Keyset public keys",
     summary="Public keys of a specific keyset",
+    response_description=(
+        "All supported token values of the mint and their associated"
+        " public key for a specific keyset."
+    ),
     status_code=HTTPStatus.OK,
     response_model=KeysResponse,
 )
-async def keyset_keys(cashu_id: str, idBase64Urlsafe: str):
+async def keyset_keys(cashu_id: str, keyset_id: str):
     """
-    Get the public keys of the mint of a specificy keyset id.
-    The id is encoded in base64_urlsafe and needs to be converted back to
-    normal base64 before it can be processed.
+    Get the public keys of the mint from a specific keyset id.
     """
 
     cashu: Union[Cashu, None] = await get_cashu(cashu_id)
@@ -241,10 +286,28 @@ async def keyset_keys(cashu_id: str, idBase64Urlsafe: str):
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
+    if keyset_id != cashu.keyset_id:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail="Keyset not found."
+        )
 
-    id = idBase64Urlsafe.replace("-", "+").replace("_", "/")
-    keyset = ledger.get_keyset(keyset_id=id)
-    return KeysResponse.parse_obj(keyset).__root__
+    # BEGIN BACKWARDS COMPATIBILITY < 0.15.0
+    # if keyset_id is not hex, we assume it is base64 and sanitize it
+    try:
+        int(keyset_id, 16)
+    except ValueError:
+        keyset_id = keyset_id.replace("-", "+").replace("_", "/")
+    # END BACKWARDS COMPATIBILITY < 0.15.0
+
+    keyset = ledger.keysets.get(keyset_id)
+    if keyset is None:
+        raise CashuError(code=0, detail="Keyset not found.")
+    keyset_for_response = KeysResponseKeyset(
+        id=keyset.id,
+        unit=keyset.unit.name,
+        keys={k: v for k, v in keyset.public_keys_hex.items()},
+    )
+    return KeysResponse(keysets=[keyset_for_response])
 
 
 @cashu_ext.get(
@@ -252,6 +315,8 @@ async def keyset_keys(cashu_id: str, idBase64Urlsafe: str):
     status_code=HTTPStatus.OK,
     name="Active keysets",
     summary="Get all active keyset id of the mind",
+    response_model=KeysetsResponse,
+    response_description="A list of all active keyset ids of the mint.",
 )
 async def keysets(cashu_id: str) -> KeysetsResponse:
     """Get the public keys of the mint"""
@@ -272,12 +337,16 @@ async def keysets(cashu_id: str) -> KeysetsResponse:
     )
 
 
-@cashu_ext.get(
-    "/api/v1/{cashu_id}/v1/mint",
-    name="Request mint",
-    summary="Request minting of new tokens",
+@cashu_ext.post(
+    "/api/v1/{cashu_id}/v1/mint/quote/bolt11",
+    name="Request mint quote",
+    summary="Request a quote for minting of new tokens",
+    response_model=PostMintQuoteResponse,
+    response_description="A payment request to mint tokens of a denomination",
 )
-async def request_mint(cashu_id: str, amount: int = 0):
+async def mint_quote(
+    cashu_id: str, payload: PostMintQuoteRequest
+) -> PostMintQuoteResponse:
     """
     Request minting of new tokens. The mint responds with a Lightning invoice.
     This endpoint can be used for a Lightning invoice UX flow.
@@ -285,30 +354,93 @@ async def request_mint(cashu_id: str, amount: int = 0):
     Call `POST /mint` after paying the invoice.
     """
     cashu: Union[Cashu, None] = await get_cashu(cashu_id)
-
     if not cashu:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
 
-    # create an invoice that the wallet needs to pay
-    try:
-        payment_hash, payment_request = await create_invoice(
-            wallet_id=cashu.wallet,
-            amount=amount,
-            memo=f"{cashu.name}",
-            extra={"tag": "cashu"},
-        )
-        invoice = Invoice(
-            amount=amount, pr=payment_request, hash=payment_hash, issued=False
-        )
-        # await store_lightning_invoice(cashu_id, invoice)
-        await ledger.crud.store_lightning_invoice(invoice=invoice, db=ledger.db)
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e))
+    quote_request = payload
 
-    print(f"Lightning invoice: {payment_request}")
+    # from ledger.py:ledger.mint_quote
+    assert quote_request.amount > 0, "amount must be positive"
+    if settings.mint_max_peg_in and quote_request.amount > settings.mint_max_peg_in:
+        raise NotAllowedError(f"Maximum mint amount is {settings.mint_max_peg_in} sat.")
+    if settings.mint_peg_out_only:
+        raise NotAllowedError("Mint does not allow minting new tokens.")
+
+    unit = Unit[quote_request.unit]
+    method = Method.bolt11
+    if settings.mint_max_balance:
+        balance = await ledger.get_balance()
+        if balance + quote_request.amount > settings.mint_max_balance:
+            raise NotAllowedError("Mint has reached maximum balance.")
+
+    logger.trace(f"requesting invoice for {unit.str(quote_request.amount)}")
+    payment_hash, payment_request = await create_invoice(
+        wallet_id=cashu.wallet,
+        amount=quote_request.amount,
+        memo=f"{cashu.name}",
+        extra={"tag": "cashu"},
+    )
+    invoice_response = InvoiceResponse(
+        ok=True,
+        checking_id=payment_hash,
+        payment_request=payment_request,
+        error_message=None,
+    )
+
+    logger.trace(
+        f"got invoice {invoice_response.payment_request} with checking id"
+        f" {invoice_response.checking_id}"
+    )
+
+    assert (
+        invoice_response.payment_request and invoice_response.checking_id
+    ), LightningError("could not fetch bolt11 payment request from backend")
+
+    # get invoice expiry time
+    invoice_obj = bolt11.decode(invoice_response.payment_request)
+
+    quote = MintQuote(
+        quote=random_hash(),
+        method=method.name,
+        request=invoice_response.payment_request,
+        checking_id=invoice_response.checking_id,
+        unit=quote_request.unit,
+        amount=quote_request.amount,
+        issued=False,
+        paid=False,
+        created_time=int(time.time()),
+        expiry=invoice_obj.expiry or 0,
+    )
+    await ledger.crud.store_mint_quote(
+        quote=quote,
+        db=ledger.db,
+    )
+    resp = PostMintQuoteResponse(
+        request=quote.request,
+        quote=quote.quote,
+        paid=quote.paid,
+        expiry=quote.expiry,
+    )
+
+    # create an invoice that the wallet needs to pay
+    # try:
+    #     payment_hash, payment_request = await create_invoice(
+    #         wallet_id=cashu.wallet,
+    #         amount=amount,
+    #         memo=f"{cashu.name}",
+    #         extra={"tag": "cashu"},
+    #     )
+    #     invoice = Invoice(
+    #         amount=amount, pr=payment_request, hash=payment_hash, issued=False
+    #     )
+    #     # await store_lightning_invoice(cashu_id, invoice)
+    #     await ledger.crud.store_lightning_invoice(invoice=invoice, db=ledger.db)
+    # except Exception as e:
+    #     logger.error(e)
+    #     raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e))
+
     # resp = GetMintResponse(pr=payment_request, hash=payment_hash)
     #     return {"pr": payment_request, "hash": payment_hash}
     return resp

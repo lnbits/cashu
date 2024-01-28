@@ -1,4 +1,3 @@
-import time
 from abc import ABC, abstractmethod
 from typing import Any, List, Optional
 
@@ -223,7 +222,7 @@ class LedgerCrudSqlite(LedgerCrud):
                 e,
                 s,
                 id,
-                int(time.time()),
+                (conn or db).timestamp_now,
             ),
         )
 
@@ -274,7 +273,7 @@ class LedgerCrudSqlite(LedgerCrud):
                 proof.secret,
                 proof.id,
                 proof.witness,
-                int(time.time()),
+                (conn or db).timestamp_now,
             ),
         )
 
@@ -307,7 +306,7 @@ class LedgerCrudSqlite(LedgerCrud):
                 proof.amount,
                 str(proof.C),
                 str(proof.secret),
-                int(time.time()),
+                (conn or db).timestamp_now,
             ),
         )
 
@@ -519,9 +518,9 @@ class LedgerCrudSqlite(LedgerCrud):
                 keyset.id,
                 keyset.seed,
                 keyset.derivation_path,
-                keyset.valid_from or int(time.time()),
-                keyset.valid_to or int(time.time()),
-                keyset.first_seen or int(time.time()),
+                keyset.valid_from or (conn or db).timestamp_now,
+                keyset.valid_to or (conn or db).timestamp_now,
+                keyset.first_seen or (conn or db).timestamp_now,
                 True,
                 keyset.version,
                 keyset.unit.name,
