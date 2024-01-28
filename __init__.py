@@ -9,7 +9,7 @@ from lnbits.tasks import catch_everything_and_restart
 
 from .lib.cashu.core.base import Method, Unit
 from .lib.cashu.mint.crud import LedgerCrudSqlite
-
+from .lib.cashu.core.settings import settings
 
 db = Database("ext_cashu")
 
@@ -33,10 +33,12 @@ backends = {
 ledger = Ledger(
     db=db,  # type: ignore
     seed=env.str("CASHU_PRIVATE_KEY", default="SuperSecretPrivateKey"),
-    derivation_path="0/0/0/1",
+    derivation_path="m/0'/0'/0'",
     backends=backends,
     crud=LedgerCrudSqlite(),
 )
+
+settings.mint_private_key = ledger.master_key
 
 cashu_ext: APIRouter = APIRouter(prefix="/cashu", tags=["cashu"])
 
