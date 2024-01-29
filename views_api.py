@@ -25,27 +25,13 @@ from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
 from .lib.cashu.core.helpers import sum_proofs
 from .lib.cashu.core.errors import CashuError, NotAllowedError, LightningError
 from .lib.cashu.core.settings import settings
-
-# try to import service_fee from lnbits.core.services but fallback to 0.5% if it doesn't exist
-service_fee_present = True
-try:
-    from lnbits.core.services import service_fee
-except ImportError:
-    logger.warning("Cashu: could not import service_fee from lnbits.core.services")
-    service_fee_present = False
-
-
-def fee_reserve_internal(amount_msat: int) -> int:
-    """
-    Calculates the fee reserve in sat for a given amount in msat.
-    """
-    fee_reserve_sat = math.ceil(fee_reserve(amount_msat) / 1000)
-    if service_fee_present:
-        return fee_reserve_sat + math.ceil(service_fee(amount_msat) / 1000)
-    else:
-        # fallback to 0.5% if service_fee is not present
-        return fee_reserve_sat + math.ceil(amount_msat * 0.005 / 1000)
-
+from .ledger import (
+    lnbits_get_quote,
+    lnbits_mint,
+    lnbits_melt_quote,
+    lnbits_melt,
+    lnbits_get_melt_quote,
+)
 
 # -------- cashu imports
 from .lib.cashu.core.base import (
@@ -360,102 +346,55 @@ async def mint_quote(
         )
 
     quote_request = payload
-
-    # from ledger.py:ledger.mint_quote
-    assert quote_request.amount > 0, "amount must be positive"
-    if settings.mint_max_peg_in and quote_request.amount > settings.mint_max_peg_in:
-        raise NotAllowedError(f"Maximum mint amount is {settings.mint_max_peg_in} sat.")
-    if settings.mint_peg_out_only:
-        raise NotAllowedError("Mint does not allow minting new tokens.")
-
-    unit = Unit[quote_request.unit]
-    method = Method.bolt11
-    if settings.mint_max_balance:
-        balance = await ledger.get_balance()
-        if balance + quote_request.amount > settings.mint_max_balance:
-            raise NotAllowedError("Mint has reached maximum balance.")
-
-    logger.trace(f"requesting invoice for {unit.str(quote_request.amount)}")
-    payment_hash, payment_request = await create_invoice(
-        wallet_id=cashu.wallet,
-        amount=quote_request.amount,
-        memo=f"{cashu.name}",
-        extra={"tag": "cashu"},
-    )
-    invoice_response = InvoiceResponse(
-        ok=True,
-        checking_id=payment_hash,
-        payment_request=payment_request,
-        error_message=None,
-    )
-
-    logger.trace(
-        f"got invoice {invoice_response.payment_request} with checking id"
-        f" {invoice_response.checking_id}"
-    )
-
-    assert (
-        invoice_response.payment_request and invoice_response.checking_id
-    ), LightningError("could not fetch bolt11 payment request from backend")
-
-    # get invoice expiry time
-    invoice_obj = bolt11.decode(invoice_response.payment_request)
-
-    quote = MintQuote(
-        quote=random_hash(),
-        method=method.name,
-        request=invoice_response.payment_request,
-        checking_id=invoice_response.checking_id,
-        unit=quote_request.unit,
-        amount=quote_request.amount,
-        issued=False,
-        paid=False,
-        created_time=int(time.time()),
-        expiry=invoice_obj.expiry or 0,
-    )
-    await ledger.crud.store_mint_quote(
-        quote=quote,
-        db=ledger.db,
-    )
+    quote = await lnbits_get_quote(ledger, quote_request, cashu)
     resp = PostMintQuoteResponse(
         request=quote.request,
         quote=quote.quote,
         paid=quote.paid,
         expiry=quote.expiry,
     )
+    return resp
 
-    # create an invoice that the wallet needs to pay
-    # try:
-    #     payment_hash, payment_request = await create_invoice(
-    #         wallet_id=cashu.wallet,
-    #         amount=amount,
-    #         memo=f"{cashu.name}",
-    #         extra={"tag": "cashu"},
-    #     )
-    #     invoice = Invoice(
-    #         amount=amount, pr=payment_request, hash=payment_hash, issued=False
-    #     )
-    #     # await store_lightning_invoice(cashu_id, invoice)
-    #     await ledger.crud.store_lightning_invoice(invoice=invoice, db=ledger.db)
-    # except Exception as e:
-    #     logger.error(e)
-    #     raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(e))
 
-    # resp = GetMintResponse(pr=payment_request, hash=payment_hash)
-    #     return {"pr": payment_request, "hash": payment_hash}
+@cashu_ext.get(
+    "/api/v1/{cashu_id}/v1/mint/quote/bolt11/{quote}",
+    summary="Get mint quote",
+    response_model=PostMintQuoteResponse,
+    response_description="Get an existing mint quote to check its status.",
+)
+async def get_mint_quote(cashu_id: str, quote: str) -> PostMintQuoteResponse:
+    """
+    Get mint quote state.
+    """
+    cashu: Union[Cashu, None] = await get_cashu(cashu_id)
+    if not cashu:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
+        )
+    logger.trace(f"> GET /v1/mint/quote/bolt11/{quote}")
+    mint_quote = await ledger.get_mint_quote(quote)
+    resp = PostMintQuoteResponse(
+        quote=mint_quote.quote,
+        request=mint_quote.request,
+        paid=mint_quote.paid,
+        expiry=mint_quote.expiry,
+    )
+    logger.trace(f"< GET /v1/mint/quote/bolt11/{quote}")
     return resp
 
 
 @cashu_ext.post(
-    "/api/v1/{cashu_id}/v1/mint",
-    name="Mint tokens",
-    summary="Mint tokens in exchange for a Bitcoin paymemt that the user has made",
+    "/api/v1/{cashu_id}/v1/mint/bolt11",
+    name="Mint tokens with a Lightning payment",
+    summary="Mint tokens by paying a bolt11 Lightning invoice.",
+    response_model=PostMintResponse,
+    response_description=(
+        "A list of blinded signatures that can be used to create proofs."
+    ),
 )
 async def mint(
-    data: PostMintRequest,
+    payload: PostMintRequest,
     cashu_id: str,
-    hash: str = Query(None),
-    payment_hash: str = Query(None),
 ) -> PostMintResponse:
     """
     Requests the minting of tokens belonging to a paid payment request.
@@ -468,82 +407,88 @@ async def mint(
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
-    # BEGIN: backwards compatibility < 0.12 where we used to lookup payments with payment_hash
-    # We use the payment_hash to lookup the hash from the database and pass that one along.
-    hash = payment_hash or hash
-    # END: backwards compatibility < 0.12
 
-    keyset = ledger.keysets.keysets[cashu.keyset_id]
-
-    if LIGHTNING:
-        ledger.locks[hash] = (
-            ledger.locks.get(hash) or asyncio.Lock()
-        )  # create a new lock if it doesn't exist
-        async with ledger.locks[hash]:
-            invoice = await ledger.crud.get_lightning_invoice(db=ledger.db, hash=hash)
-            if invoice is None:
-                raise HTTPException(
-                    status_code=HTTPStatus.NOT_FOUND,
-                    detail="Mint does not know this invoice.",
-                )
-            if invoice.issued:
-                raise HTTPException(
-                    status_code=HTTPStatus.PAYMENT_REQUIRED,
-                    detail="Tokens already issued for this invoice.",
-                )
-            # set this invoice as issued
-            await ledger.crud.update_lightning_invoice(
-                db=ledger.db, hash=hash, issued=True
-            )
-        del ledger.locks[hash]
-
-        try:
-            status: PaymentStatus = await check_transaction_status(cashu.wallet, hash)
-            total_requested = sum([bm.amount for bm in data.outputs])
-            if total_requested > invoice.amount:
-                raise HTTPException(
-                    status_code=HTTPStatus.PAYMENT_REQUIRED,
-                    detail=f"Requested amount too high: {total_requested}. Invoice amount: {invoice.amount}",
-                )
-
-            if not status.paid:
-                raise HTTPException(
-                    status_code=HTTPStatus.PAYMENT_REQUIRED, detail="Invoice not paid."
-                )
-
-            promises = await ledger._generate_promises(B_s=data.outputs, keyset=keyset)
-            return PostMintResponse(promises=promises)
-        except (Exception, HTTPException) as e:
-            logger.debug(f"Cashu: /mint {str(e) or getattr(e, 'detail')}")
-            # unset issued flag because something went wrong
-            await ledger.crud.update_lightning_invoice(
-                db=ledger.db, hash=hash, issued=False
-            )
-            raise HTTPException(
-                status_code=getattr(e, "status_code")
-                or HTTPStatus.INTERNAL_SERVER_ERROR,
-                detail=str(e) or getattr(e, "detail"),
-            )
-    else:
-        # only used for testing when LIGHTNING=false
-        promises = await ledger._generate_promises(B_s=data.outputs, keyset=keyset)
-        return PostMintResponse(promises=promises)
+    outputs = payload.outputs
+    quote_id = payload.quote
+    promises = await lnbits_mint(ledger, outputs, quote_id, cashu)
+    blinded_signatures = PostMintResponse(signatures=promises)
+    logger.trace(f"< POST /v1/mint/bolt11: {blinded_signatures}")
+    return blinded_signatures
 
 
 @cashu_ext.post(
-    "/api/v1/{cashu_id}/v1/melt",
-    name="Melt tokens",
-    summary="Melt tokens for a Bitcoin payment that the mint will make for the user in exchange",
+    "/api/v1/{cashu_id}/v1/melt/quote/bolt11",
+    summary="Request a quote for melting tokens",
+    response_model=PostMeltQuoteResponse,
+    response_description="Melt tokens for a payment on a supported payment method.",
 )
-async def melt(payload: PostMeltRequest, cashu_id: str):
+async def get_melt_quote(
+    payload: PostMeltQuoteRequest,
+    cashu_id: str,
+) -> PostMeltQuoteResponse:
+    """
+    Request a quote for melting tokens.
+    """
+    cashu: Union[Cashu, None] = await get_cashu(cashu_id)
+    if cashu is None:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
+        )
+    logger.trace(f"> POST /v1/melt/quote/bolt11: {payload}")
+    quote = await lnbits_melt_quote(ledger, payload, cashu)
+    logger.trace(f"< POST /v1/melt/quote/bolt11: {quote}")
+    return quote
+
+
+@cashu_ext.get(
+    "/api/v1/{cashu_id}/v1/melt/quote/bolt11/{quote}",
+    summary="Get melt quote",
+    response_model=PostMeltQuoteResponse,
+    response_description="Get an existing melt quote to check its status.",
+)
+async def melt_quote(quote: str, cashu_id: str) -> PostMeltQuoteResponse:
+    """
+    Get melt quote state.
+    """
+    cashu: Union[Cashu, None] = await get_cashu(cashu_id)
+    if cashu is None:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
+        )
+    logger.trace(f"> GET /v1/melt/quote/bolt11/{quote}")
+    melt_quote = await lnbits_get_melt_quote(quote)
+    resp = PostMeltQuoteResponse(
+        quote=melt_quote.quote,
+        amount=melt_quote.amount,
+        fee_reserve=melt_quote.fee_reserve,
+        paid=melt_quote.paid,
+    )
+    logger.trace(f"< GET /v1/melt/quote/bolt11/{quote}")
+    return resp
+
+
+@cashu_ext.post(
+    "/api/v1/{cashu_id}/v1/melt/bolt11",
+    name="Melt tokens",
+    summary=(
+        "Melt tokens for a Bitcoin payment that the mint will make for the user in"
+        " exchange"
+    ),
+    response_model=PostMeltResponse,
+    response_description=(
+        "The state of the payment, a preimage as proof of payment, and a list of"
+        " promises for change."
+    ),
+)
+async def melt(payload: PostMeltRequest, cashu_id: str) -> PostMeltResponse:
     """Invalidates proofs and pays a Lightning invoice."""
     cashu: Union[None, Cashu] = await get_cashu(cashu_id)
     if cashu is None:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
-    proofs = payload.proofs
-    invoice = payload.pr
+    proofs = payload.inputs
+    quote = payload.quote
     outputs = payload.outputs
 
     # !!!!!!! MAKE SURE THAT PROOFS ARE ONLY FROM THIS CASHU KEYSET ID
@@ -559,132 +504,45 @@ async def melt(payload: PostMeltRequest, cashu_id: str):
         status_code=HTTPStatus.METHOD_NOT_ALLOWED,
         detail="Error: Tokens are from another mint.",
     )
-
-    # set proofs as pending
-    await ledger._set_proofs_pending(proofs)
-    try:
-        total_provided = sum_proofs(proofs)
-        invoice_obj = bolt11.decode(invoice)
-        assert invoice_obj.amount_msat, "invoice has no amount."
-        invoice_amount = math.ceil(invoice_obj.amount_msat / 1000)
-
-        reserve_fees_sat = fee_reserve_internal(invoice_obj.amount_msat)
-
-        # verify overspending attempt
-        assert total_provided >= invoice_amount + reserve_fees_sat, Exception(
-            "provided proofs not enough for Lightning payment. Provided:"
-            f" {total_provided}, needed: {invoice_amount + reserve_fees_sat}"
-        )
-        # verify spending inputs and their spending conditions
-        await ledger.verify_inputs_and_outputs(proofs)
-
-        logger.debug(f"Cashu: Initiating payment of {total_provided} sats")
-        await pay_invoice(
-            wallet_id=cashu.wallet,
-            payment_request=invoice,
-            description="Pay Cashu invoice",
-            extra={"tag": "cashu", "cashu_name": cashu.name},
-        )
-        logger.debug(
-            f"Cashu: Wallet {cashu.wallet} checking PaymentStatus of {invoice_obj.payment_hash}"
-        )
-        status: PaymentStatus = await check_transaction_status(
-            cashu.wallet, invoice_obj.payment_hash
-        )
-
-        if not status.paid:
-            raise Exception(f"Cashu: Payment failed for {invoice_obj.payment_hash}")
-
-        logger.debug(
-            f"Cashu: Payment successful, invalidating proofs for {invoice_obj.payment_hash}"
-        )
-        await ledger._invalidate_proofs(proofs)
-
-        # get the actual paid fees from the db entry
-        payment = await get_standalone_payment(invoice_obj.payment_hash)
-        assert payment, Exception("Payment not found.")
-        paid_fee_msat = payment.fee
-
-        # prepare change to compensate wallet for overpaid fees
-        return_promises: List[BlindedSignature] = []
-        if outputs and paid_fee_msat is not None:
-            keyset = ledger.keysets.keysets[cashu.keyset_id]
-            return_promises = await ledger._generate_change_promises(
-                total_provided=total_provided,
-                invoice_amount=invoice_amount,
-                ln_fee_msat=paid_fee_msat,
-                outputs=outputs,
-                keyset=keyset,
-            )
-    except Exception as e:
-        logger.debug(f"Cashu /melt: Exception: {str(e)}")
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST,
-            detail=f"Cashu: {str(e)}",
-        )
-    finally:
-        # delete proofs from pending list
-        await ledger._unset_proofs_pending(proofs)
-
-    return GetMeltResponse(
-        paid=status.paid, preimage=status.preimage, change=return_promises
+    preimage, change_promises = await lnbits_melt(
+        ledger,
+        proofs=payload.inputs,
+        quote=payload.quote,
+        outputs=payload.outputs,
+        cashu=cashu,
     )
+    resp = PostMeltResponse(
+        paid=True, payment_preimage=preimage, change=change_promises
+    )
+    logger.trace(f"< POST /v1/melt/bolt11: {resp}")
+    return resp
 
 
 @cashu_ext.post(
-    "/api/v1/{cashu_id}/v1/check",
-    name="Check proof state",
-    summary="Check whether a proof is spent already or is pending in a transaction",
+    "/api/v1/{cashu_id}/v1/swap",
+    name="Swap tokens",
+    summary="Swap inputs for outputs of the same value",
+    response_model=PostSplitResponse,
+    response_description=(
+        "An array of blinded signatures that can be used to create proofs."
+    ),
 )
-async def check_spendable(payload, cashu_id: str):
-    """Check whether a secret has been spent already or not."""
-    cashu: Union[None, Cashu] = await get_cashu(cashu_id)
-    if cashu is None:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
-        )
-    spendableList, pendingList = await ledger.check_proof_state(payload.proofs)
-    return CheckSpendableResponse(spendable=spendableList, pending=pendingList)
-
-
-@cashu_ext.post(
-    "/api/v1/{cashu_id}/v1/checkfees",
-    name="Check fees",
-    summary="Check fee reserve for a Lightning payment",
-)
-async def check_fees(payload, cashu_id: str):
+async def swap(
+    payload: PostSplitRequest,
+    cashu_id: str,
+) -> PostSplitResponse:
     """
-    Responds with the fees necessary to pay a Lightning invoice.
-    Used by wallets for figuring out the fees they need to supply.
-    This is can be useful for checking whether an invoice is internal (Cashu-to-Cashu).
-    """
-    cashu: Union[None, Cashu] = await get_cashu(cashu_id)
-    if cashu is None:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
-        )
-    invoice_obj = bolt11.decode(payload.pr)
-    assert invoice_obj.amount_msat, Exception("Invoice amount is zero.")
-    fees_sat = fee_reserve_internal(invoice_obj.amount_msat)
-    return CheckFeesResponse(fee=fees_sat)
+    Requests a set of Proofs to be split into two a new set of BlindedSignatures.
 
-
-@cashu_ext.post(
-    "/api/v1/{cashu_id}/v1/split",
-    name="Split",
-    summary="Split proofs at a specified amount",
-)
-async def split(payload: PostSplitRequest, cashu_id: str):
-    """
-    Requetst a set of tokens with amount "total" to be split into two
-    newly minted sets with amount "split" and "total-split".
+    This endpoint is used by Alice to split a set of proofs before making a payment to Carol.
+    It is then used by Carol (by setting split=total) to redeem the tokens.
     """
     cashu: Union[None, Cashu] = await get_cashu(cashu_id)
     if cashu is None:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
-    proofs = payload.proofs
+    proofs = payload.inputs
 
     # !!!!!!! MAKE SURE THAT PROOFS ARE ONLY FROM THIS CASHU KEYSET ID
     # THIS IS NECESSARY BECAUSE THE CASHU BACKEND WILL ACCEPT ANY VALID
@@ -700,55 +558,180 @@ async def split(payload: PostSplitRequest, cashu_id: str):
         detail="Error: Tokens are from another mint.",
     )
 
+    logger.trace(f"> POST /v1/swap: {payload}")
     assert payload.outputs, Exception("no outputs provided.")
-    try:
-        keyset = ledger.keysets.keysets[cashu.keyset_id]
-        promises = await ledger.split(
-            proofs=payload.proofs,
-            outputs=payload.outputs,
-            keyset=keyset,
-            amount=payload.amount,
-        )
-    except Exception as exc:
+    keyset = ledger.keysets[cashu.keyset_id]
+    signatures = await ledger.split(
+        proofs=payload.inputs, outputs=payload.outputs, keyset=keyset
+    )
+
+    return PostSplitResponse(signatures=signatures)
+
+
+@cashu_ext.post(
+    "/api/v1/{cashu_id}/v1/checkstate",
+    name="Check proof state",
+    summary="Check whether a proof is spent already or is pending in a transaction",
+    response_model=PostCheckStateResponse,
+    response_description=(
+        "Two lists of booleans indicating whether the provided proofs "
+        "are spendable or pending in a transaction respectively."
+    ),
+)
+async def check_state(
+    payload: PostCheckStateRequest,
+    cashu_id: str,
+) -> PostCheckStateResponse:
+    """Check whether a secret has been spent already or not."""
+    cashu: Union[None, Cashu] = await get_cashu(cashu_id)
+    if cashu is None:
         raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST,
-            detail=str(exc),
+            status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
-    if not promises:
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST,
-            detail="there was an error with the split",
-        )
-    if payload.amount:
-        # BEGIN backwards compatibility < 0.13
-        # old clients expect two lists of promises where the second one's amounts
-        # sum up to `amount`. The first one is the rest.
-        # The returned value `promises` has the form [keep1, keep2, ..., send1, send2, ...]
-        # The sum of the sendx is `amount`. We need to split this into two lists and keep the order of the elements.
-        frst_promises: List[BlindedSignature] = []
-        scnd_promises: List[BlindedSignature] = []
-        scnd_amount = 0
-        for promise in promises[::-1]:  # we iterate backwards
-            if scnd_amount < payload.amount:
-                scnd_promises.insert(0, promise)  # and insert at the beginning
-                scnd_amount += promise.amount
-            else:
-                frst_promises.insert(0, promise)  # and insert at the beginning
-        logger.trace(
-            f"Split into keep: {len(frst_promises)}: {sum([p.amount for p in frst_promises])} sat and send: {len(scnd_promises)}: {sum([p.amount for p in scnd_promises])} sat"
-        )
-        return PostSplitResponse_Deprecated(fst=frst_promises, snd=scnd_promises)
-        # END backwards compatibility < 0.13
-    else:
-        return PostSplitResponse(promises=promises)
+    logger.trace(f"> POST /v1/checkstate: {payload}")
+    proof_states = await ledger.check_proofs_state(payload.secrets)
+    return PostCheckStateResponse(states=proof_states)
 
 
 @cashu_ext.post(
     "/api/v1/{cashu_id}/v1/restore",
     name="Restore",
     summary="Restores a blinded signature from a secret",
+    response_model=PostRestoreResponse,
+    response_description=(
+        "Two lists with the first being the list of the provided outputs that "
+        "have an associated blinded signature which is given in the second list."
+    ),
 )
-async def restore(payload: PostMintRequest) -> PostRestoreResponse:
+async def restore(payload: PostMintRequest, cashu_id: str) -> PostRestoreResponse:
+    cashu: Union[None, Cashu] = await get_cashu(cashu_id)
+    if cashu is None:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
+        )
     assert payload.outputs, Exception("no outputs provided.")
     outputs, promises = await ledger.restore(payload.outputs)
     return PostRestoreResponse(outputs=outputs, promises=promises)
+
+
+# @cashu_ext.post(
+#     "/api/v1/{cashu_id}/v1/check",
+#     name="Check proof state",
+#     summary="Check whether a proof is spent already or is pending in a transaction",
+# )
+# async def check_spendable(payload, cashu_id: str):
+#     """Check whether a secret has been spent already or not."""
+#     cashu: Union[None, Cashu] = await get_cashu(cashu_id)
+#     if cashu is None:
+#         raise HTTPException(
+#             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
+#         )
+#     spendableList, pendingList = await ledger.check_proof_state(payload.proofs)
+#     return CheckSpendableResponse(spendable=spendableList, pending=pendingList)
+
+
+# @cashu_ext.post(
+#     "/api/v1/{cashu_id}/v1/checkfees",
+#     name="Check fees",
+#     summary="Check fee reserve for a Lightning payment",
+# )
+# async def check_fees(payload, cashu_id: str):
+#     """
+#     Responds with the fees necessary to pay a Lightning invoice.
+#     Used by wallets for figuring out the fees they need to supply.
+#     This is can be useful for checking whether an invoice is internal (Cashu-to-Cashu).
+#     """
+#     cashu: Union[None, Cashu] = await get_cashu(cashu_id)
+#     if cashu is None:
+#         raise HTTPException(
+#             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
+#         )
+#     invoice_obj = bolt11.decode(payload.pr)
+#     assert invoice_obj.amount_msat, Exception("Invoice amount is zero.")
+#     fees_sat = fee_reserve_internal(invoice_obj.amount_msat)
+#     return CheckFeesResponse(fee=fees_sat)
+
+
+# @cashu_ext.post(
+#     "/api/v1/{cashu_id}/v1/split",
+#     name="Split",
+#     summary="Split proofs at a specified amount",
+# )
+# async def split(payload: PostSplitRequest, cashu_id: str):
+#     """
+#     Requetst a set of tokens with amount "total" to be split into two
+#     newly minted sets with amount "split" and "total-split".
+#     """
+#     cashu: Union[None, Cashu] = await get_cashu(cashu_id)
+#     if cashu is None:
+#         raise HTTPException(
+#             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
+#         )
+#     proofs = payload.proofs
+
+#     # !!!!!!! MAKE SURE THAT PROOFS ARE ONLY FROM THIS CASHU KEYSET ID
+#     # THIS IS NECESSARY BECAUSE THE CASHU BACKEND WILL ACCEPT ANY VALID
+#     # TOKENS
+#     accepted_keysets = [cashu.keyset_id]
+#     if ledger.master_key:
+#         # NOTE: bug fix, fee return tokens for v 0.3.1 are from the master keyset
+#         # we need to accept them but only if a master keyset is set, otherwise it's unsafe
+#         # to accept them.
+#         accepted_keysets += [ledger.keyset.id]
+#     assert all([p.id in accepted_keysets for p in proofs]), HTTPException(
+#         status_code=HTTPStatus.METHOD_NOT_ALLOWED,
+#         detail="Error: Tokens are from another mint.",
+#     )
+
+#     assert payload.outputs, Exception("no outputs provided.")
+#     try:
+#         keyset = ledger.keysets.keysets[cashu.keyset_id]
+#         promises = await ledger.split(
+#             proofs=payload.proofs,
+#             outputs=payload.outputs,
+#             keyset=keyset,
+#             amount=payload.amount,
+#         )
+#     except Exception as exc:
+#         raise HTTPException(
+#             status_code=HTTPStatus.BAD_REQUEST,
+#             detail=str(exc),
+#         )
+#     if not promises:
+#         raise HTTPException(
+#             status_code=HTTPStatus.BAD_REQUEST,
+#             detail="there was an error with the split",
+#         )
+#     if payload.amount:
+#         # BEGIN backwards compatibility < 0.13
+#         # old clients expect two lists of promises where the second one's amounts
+#         # sum up to `amount`. The first one is the rest.
+#         # The returned value `promises` has the form [keep1, keep2, ..., send1, send2, ...]
+#         # The sum of the sendx is `amount`. We need to split this into two lists and keep the order of the elements.
+#         frst_promises: List[BlindedSignature] = []
+#         scnd_promises: List[BlindedSignature] = []
+#         scnd_amount = 0
+#         for promise in promises[::-1]:  # we iterate backwards
+#             if scnd_amount < payload.amount:
+#                 scnd_promises.insert(0, promise)  # and insert at the beginning
+#                 scnd_amount += promise.amount
+#             else:
+#                 frst_promises.insert(0, promise)  # and insert at the beginning
+#         logger.trace(
+#             f"Split into keep: {len(frst_promises)}: {sum([p.amount for p in frst_promises])} sat and send: {len(scnd_promises)}: {sum([p.amount for p in scnd_promises])} sat"
+#         )
+#         return PostSplitResponse_Deprecated(fst=frst_promises, snd=scnd_promises)
+#         # END backwards compatibility < 0.13
+#     else:
+#         return PostSplitResponse(promises=promises)
+
+
+# @cashu_ext.post(
+#     "/api/v1/{cashu_id}/v1/restore",
+#     name="Restore",
+#     summary="Restores a blinded signature from a secret",
+# )
+# async def restore(payload: PostMintRequest) -> PostRestoreResponse:
+#     assert payload.outputs, Exception("no outputs provided.")
+#     outputs, promises = await ledger.restore(payload.outputs)
+#     return PostRestoreResponse(outputs=outputs, promises=promises)
