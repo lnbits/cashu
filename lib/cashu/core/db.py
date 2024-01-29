@@ -3,8 +3,9 @@ import datetime
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Union
 
+from loguru import logger
 from sqlalchemy import create_engine
 from sqlalchemy_aio.base import AsyncConnection
 from sqlalchemy_aio.strategy import ASYNCIO_STRATEGY  # type: ignore
@@ -30,7 +31,8 @@ class Compat:
         if self.type in {POSTGRES, COCKROACH}:
             return "now()"
         elif self.type == SQLITE:
-            return "(strftime('%s', 'now'))"
+            # return "(strftime('%s', 'now'))"
+            return str(int(time.time()))
         return "<nothing>"
 
     @property
@@ -118,7 +120,7 @@ class Database(Compat):
                     (1082, 1083, 1266),
                     "DATE2INT",
                     lambda value, curs: (
-                        time.mktime(value.timetuple()) if value is not None else None
+                        time.mktime(value.timetuple()) if value is not None else None  # type: ignore
                     ),
                 )
             )
@@ -130,7 +132,7 @@ class Database(Compat):
             # )
         else:
             if not os.path.exists(self.db_location):
-                print(f"Creating database directory: {self.db_location}")
+                logger.info(f"Creating database directory: {self.db_location}")
                 os.makedirs(self.db_location)
             self.path = os.path.join(self.db_location, f"{self.name}.sqlite3")
             database_uri = f"sqlite:///{self.path}"
@@ -189,7 +191,7 @@ class Database(Compat):
 
 
 # public functions for LNbits to use (we don't want to change the Database or Compat classes above)
-def table_with_schema(db: Database, table: str):
+def table_with_schema(db: Union[Database, Connection], table: str):
     return f"{db.references_schema if db.schema else ''}{table}"
 
 
@@ -201,3 +203,46 @@ def lock_table(db: Database, table: str) -> str:
     elif db.type == SQLITE:
         return "BEGIN EXCLUSIVE TRANSACTION;"
     return "<nothing>"
+
+
+def timestamp_from_seconds(
+    db: Database, seconds: Union[int, float, None]
+) -> Union[str, None]:
+    if seconds is None:
+        return None
+    seconds = int(seconds)
+    if db.type in {POSTGRES, COCKROACH}:
+        return datetime.datetime.fromtimestamp(seconds).strftime("%Y-%m-%d %H:%M:%S")
+    elif db.type == SQLITE:
+        return str(seconds)
+    return None
+
+
+def timestamp_now(db: Database) -> str:
+    timestamp = timestamp_from_seconds(db, time.time())
+    if timestamp is None:
+        raise Exception("Timestamp is None")
+    return timestamp
+
+
+@asynccontextmanager
+async def get_db_connection(db: Database, conn: Optional[Connection] = None):
+    """Either yield the existing database connection or create a new one.
+
+    Note: This should be implemented as Database.get_db_connection(self, conn) but
+    since we want to use it in LNbits, we can't change the Database class their.
+
+    Args:
+        db (Database): Database object.
+        conn (Optional[Connection], optional): Connection object. Defaults to None.
+
+    Yields:
+        Connection: Connection object.
+    """
+    if conn is not None:
+        # Yield the existing connection
+        yield conn
+    else:
+        # Create and yield a new connection
+        async with db.connect() as new_conn:
+            yield new_conn

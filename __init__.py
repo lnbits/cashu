@@ -2,10 +2,13 @@ import asyncio
 
 from environs import Env
 from fastapi import APIRouter
-
 from lnbits.db import Database
 from lnbits.helpers import template_renderer
 from lnbits.tasks import catch_everything_and_restart
+
+from .lib.cashu.core.base import Method, Unit
+from .lib.cashu.core.settings import settings
+from .lib.cashu.mint.crud import LedgerCrudSqlite
 
 db = Database("ext_cashu")
 
@@ -16,18 +19,25 @@ cashu_static_files = [
         "name": "cashu_static",
     }
 ]
-from .lib.cashu.lightning.base import Wallet
+from .lib.cashu.lightning.base import LightningBackend
 from .lib.cashu.mint.ledger import Ledger
 
 env = Env()
 env.read_env()
 
+backends = {
+    Method.bolt11: {Unit.sat: LightningBackend},
+}
+
 ledger = Ledger(
     db=db,  # type: ignore
     seed=env.str("CASHU_PRIVATE_KEY", default="SuperSecretPrivateKey"),
-    derivation_path="0/0/0/1",
-    lightning=Wallet,  # type: ignore
+    derivation_path="m/0'/0'/0'",
+    backends=backends,
+    crud=LedgerCrudSqlite(),
 )
+
+settings.mint_private_key = ledger.master_key
 
 cashu_ext: APIRouter = APIRouter(prefix="/cashu", tags=["cashu"])
 
@@ -39,6 +49,7 @@ def cashu_renderer():
 from .tasks import startup_cashu_mint, wait_for_paid_invoices
 from .views import *  # noqa: F401,F403
 from .views_api import *  # noqa: F401,F403
+from .views_api_deprecated import *  # noqa: F401,F403
 
 
 def cashu_start():

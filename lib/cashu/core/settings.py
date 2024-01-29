@@ -1,14 +1,14 @@
 import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from environs import Env  # type: ignore
 from pydantic import BaseSettings, Extra, Field
 
 env = Env()
 
-VERSION = "0.14.0"
+VERSION = "0.15.0"
 
 
 def find_env_file():
@@ -25,7 +25,6 @@ def find_env_file():
 
 class CashuSettings(BaseSettings):
     env_file: str = Field(default=None)
-    lightning: bool = Field(default=True)
     lightning_fee_percent: float = Field(default=1.0)
     lightning_reserve_fee_min: int = Field(default=2000)
     max_order: int = Field(default=64)
@@ -44,11 +43,14 @@ class EnvSettings(CashuSettings):
     debug: bool = Field(default=False)
     log_level: str = Field(default="INFO")
     cashu_dir: str = Field(default=os.path.join(str(Path.home()), ".cashu"))
+    debug_profiling: bool = Field(default=False)
+    debug_mint_only_deprecated: bool = Field(default=False)
 
 
 class MintSettings(CashuSettings):
     mint_private_key: str = Field(default=None)
-    mint_derivation_path: str = Field(default="0/0/0/0")
+    mint_derivation_path: str = Field(default="m/0'/0'/0'")
+    mint_derivation_path_list: List[str] = Field(default=[])
     mint_listen_host: str = Field(default="127.0.0.1")
     mint_listen_port: int = Field(default=3338)
     mint_lightning_backend: str = Field(default="LNbitsWallet")
@@ -56,9 +58,20 @@ class MintSettings(CashuSettings):
     mint_peg_out_only: bool = Field(default=False)
     mint_max_peg_in: int = Field(default=None)
     mint_max_peg_out: int = Field(default=None)
+    mint_max_request_length: int = Field(default=1000)
+    mint_max_balance: int = Field(default=None)
 
     mint_lnbits_endpoint: str = Field(default=None)
     mint_lnbits_key: str = Field(default=None)
+
+    mint_strike_key: str = Field(default=None)
+
+
+class FakeWalletSettings(MintSettings):
+    fakewallet_brr: bool = Field(default=True)
+    fakewallet_delay_payment: bool = Field(default=False)
+    fakewallet_stochastic_invoice: bool = Field(default=False)
+    mint_cache_secrets: bool = Field(default=True)
 
 
 class MintInformation(CashuSettings):
@@ -71,7 +84,6 @@ class MintInformation(CashuSettings):
 
 
 class WalletSettings(CashuSettings):
-    lightning: bool = Field(default=True)
     tor: bool = Field(default=True)
     socks_host: str = Field(default=None)  # deprecated
     socks_port: int = Field(default=9050)  # deprecated
@@ -81,6 +93,7 @@ class WalletSettings(CashuSettings):
     mint_host: str = Field(default="8333.space")
     mint_port: int = Field(default=3338)
     wallet_name: str = Field(default="wallet")
+    wallet_unit: str = Field(default="sat")
 
     api_port: int = Field(default=4448)
     api_host: str = Field(default="127.0.0.1")
@@ -99,8 +112,25 @@ class WalletSettings(CashuSettings):
     locktime_delta_seconds: int = Field(default=86400)  # 1 day
 
 
+class LndRestFundingSource(MintSettings):
+    mint_lnd_rest_endpoint: Optional[str] = Field(default=None)
+    mint_lnd_rest_cert: Optional[str] = Field(default=None)
+    mint_lnd_rest_macaroon: Optional[str] = Field(default=None)
+    mint_lnd_rest_admin_macaroon: Optional[str] = Field(default=None)
+    mint_lnd_rest_invoice_macaroon: Optional[str] = Field(default=None)
+
+
+class CoreLightningRestFundingSource(MintSettings):
+    mint_corelightning_rest_url: Optional[str] = Field(default=None)
+    mint_corelightning_rest_macaroon: Optional[str] = Field(default=None)
+    mint_corelightning_rest_cert: Optional[str] = Field(default=None)
+
+
 class Settings(
     EnvSettings,
+    LndRestFundingSource,
+    CoreLightningRestFundingSource,
+    FakeWalletSettings,
     MintSettings,
     MintInformation,
     WalletSettings,
