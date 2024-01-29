@@ -26,7 +26,7 @@ from .lib.cashu.core.helpers import sum_proofs
 from .lib.cashu.core.errors import CashuError, NotAllowedError, LightningError
 from .lib.cashu.core.settings import settings
 from .ledger import (
-    lnbits_get_quote,
+    lnbits_mint_quote,
     lnbits_mint,
     lnbits_melt_quote,
     lnbits_melt,
@@ -88,15 +88,6 @@ from .models import Cashu
 
 # --------- extension imports
 
-# WARNING: Do not set this to False in production! This will create
-# tokens for free otherwise. This is for testing purposes only!
-
-LIGHTNING = True
-
-if not LIGHTNING:
-    logger.warning(
-        "Cashu: LIGHTNING is set False! That means that I will create ecash for free!"
-    )
 
 ########################################
 ############### LNBITS MINTS ###########
@@ -346,7 +337,7 @@ async def mint_quote(
         )
 
     quote_request = payload
-    quote = await lnbits_get_quote(ledger, quote_request, cashu)
+    quote = await lnbits_mint_quote(ledger, quote_request, cashu)
     resp = PostMintQuoteResponse(
         request=quote.request,
         quote=quote.quote,
