@@ -5,10 +5,13 @@ from typing import Dict, List, Union
 
 from fastapi import Depends, Query
 from lnbits import bolt11
-from lnbits.core.crud import (get_installed_extension, get_standalone_payment,
-                              get_user)
-from lnbits.core.services import (check_transaction_status, create_invoice,
-                                  fee_reserve, pay_invoice)
+from lnbits.core.crud import get_installed_extension, get_standalone_payment, get_user
+from lnbits.core.services import (
+    check_transaction_status,
+    create_invoice,
+    fee_reserve,
+    pay_invoice,
+)
 from lnbits.decorators import WalletTypeInfo, get_key_type, require_admin_key
 from lnbits.helpers import urlsafe_short_hash
 from lnbits.wallets.base import PaymentStatus
@@ -42,29 +45,37 @@ def fee_reserve_internal(amount_msat: int) -> int:
         return fee_reserve_sat + math.ceil(amount_msat * 0.005 / 1000)
 
 
-from .ledger import (lnbits_get_melt_quote, lnbits_melt, lnbits_melt_quote,
-                     lnbits_mint, lnbits_mint_quote)
+from .ledger import (
+    lnbits_get_melt_quote,
+    lnbits_melt,
+    lnbits_melt_quote,
+    lnbits_mint,
+    lnbits_mint_quote,
+)
+
 # -------- cashu imports
-from .lib.cashu.core.base import (BlindedSignature,
-                                  CheckFeesRequest_deprecated,
-                                  CheckFeesResponse_deprecated,
-                                  CheckSpendableRequest_deprecated,
-                                  CheckSpendableResponse_deprecated,
-                                  GetInfoResponse_deprecated,
-                                  GetMintResponse_deprecated,
-                                  KeysetsResponse_deprecated,
-                                  KeysResponse_deprecated,
-                                  PostMeltQuoteRequest,
-                                  PostMeltRequest_deprecated,
-                                  PostMeltResponse_deprecated,
-                                  PostMintQuoteRequest,
-                                  PostMintRequest_deprecated,
-                                  PostMintResponse_deprecated,
-                                  PostRestoreResponse,
-                                  PostSplitRequest_Deprecated,
-                                  PostSplitResponse_Deprecated,
-                                  PostSplitResponse_Very_Deprecated,
-                                  SpentState)
+from .lib.cashu.core.base import (
+    BlindedSignature,
+    CheckFeesRequest_deprecated,
+    CheckFeesResponse_deprecated,
+    CheckSpendableRequest_deprecated,
+    CheckSpendableResponse_deprecated,
+    GetInfoResponse_deprecated,
+    GetMintResponse_deprecated,
+    KeysetsResponse_deprecated,
+    KeysResponse_deprecated,
+    PostMeltQuoteRequest,
+    PostMeltRequest_deprecated,
+    PostMeltResponse_deprecated,
+    PostMintQuoteRequest,
+    PostMintRequest_deprecated,
+    PostMintResponse_deprecated,
+    PostRestoreResponse,
+    PostSplitRequest_Deprecated,
+    PostSplitResponse_Deprecated,
+    PostSplitResponse_Very_Deprecated,
+    SpentState,
+)
 from .lib.cashu.core.db import lock_table
 from .models import Cashu
 
@@ -339,8 +350,10 @@ async def melt_deprecated(
             if not output.id:
                 output.id = cashu.keyset_id
     # END BACKWARDS COMPATIBILITY < 0.14
-    quote = await ledger.melt_quote(
-        PostMeltQuoteRequest(request=payload.pr, unit="sat")
+    quote = await lnbits_melt_quote(
+        ledger,
+        PostMeltQuoteRequest(request=payload.pr, unit="sat"),
+        cashu,
     )
     preimage, change_promises = await lnbits_melt(
         ledger,
