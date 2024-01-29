@@ -1,19 +1,16 @@
 import asyncio
+import datetime
 import math
 import time
-import datetime
 from http import HTTPStatus
-from typing import Dict, List, Union, Any
+from typing import Any, Dict, List, Union
 
 from fastapi import Depends, Query
 from lnbits import bolt11
-from lnbits.core.crud import get_standalone_payment, get_installed_extension, get_user
-from lnbits.core.services import (
-    check_transaction_status,
-    create_invoice,
-    fee_reserve,
-    pay_invoice,
-)
+from lnbits.core.crud import (get_installed_extension, get_standalone_payment,
+                              get_user)
+from lnbits.core.services import (check_transaction_status, create_invoice,
+                                  fee_reserve, pay_invoice)
 from lnbits.decorators import WalletTypeInfo, get_key_type, require_admin_key
 from lnbits.helpers import urlsafe_short_hash
 from lnbits.wallets.base import PaymentStatus
@@ -22,68 +19,31 @@ from starlette.exceptions import HTTPException
 
 from . import cashu_ext, ledger
 from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
-from .lib.cashu.core.helpers import sum_proofs
-from .lib.cashu.core.errors import CashuError, NotAllowedError, LightningError
-from .lib.cashu.core.settings import settings
-from .ledger import (
-    lnbits_mint_quote,
-    lnbits_mint,
-    lnbits_melt_quote,
-    lnbits_melt,
-    lnbits_get_melt_quote,
-)
-
+from .ledger import (lnbits_get_melt_quote, lnbits_melt, lnbits_melt_quote,
+                     lnbits_mint, lnbits_mint_quote)
 # -------- cashu imports
-from .lib.cashu.core.base import (
-    GetInfoResponse,
-    KeysetsResponse,
-    KeysetsResponseKeyset,
-    KeysResponse,
-    KeysResponseKeyset,
-    PostCheckStateRequest,
-    PostCheckStateResponse,
-    PostMeltQuoteRequest,
-    PostMeltQuoteResponse,
-    PostMeltRequest,
-    PostMeltResponse,
-    PostMintQuoteRequest,
-    PostMintQuoteResponse,
-    PostMintRequest,
-    PostMintResponse,
-    PostRestoreResponse,
-    PostSplitRequest,
-    PostSplitResponse,
-    DLEQ,
-    Amount,
-    BlindedMessage,
-    BlindedSignature,
-    MeltQuote,
-    Method,
-    MintKeyset,
-    MintQuote,
-    PostMeltQuoteRequest,
-    PostMeltQuoteResponse,
-    PostMintQuoteRequest,
-    Proof,
-    ProofState,
-    SpentState,
-    Unit,
-)
-from .lib.cashu.lightning.base import (
-    InvoiceResponse,
-    LightningBackend,
-    PaymentQuoteResponse,
-    PaymentStatus,
-)
-from .lib.cashu.core.crypto.keys import (
-    derive_keyset_id,
-    derive_keyset_id_deprecated,
-    derive_pubkey,
-    random_hash,
-)
-
-
+from .lib.cashu.core.base import (DLEQ, Amount, BlindedMessage,
+                                  BlindedSignature, GetInfoResponse,
+                                  KeysetsResponse, KeysetsResponseKeyset,
+                                  KeysResponse, KeysResponseKeyset, MeltQuote,
+                                  Method, MintKeyset, MintQuote,
+                                  PostCheckStateRequest,
+                                  PostCheckStateResponse, PostMeltQuoteRequest,
+                                  PostMeltQuoteResponse, PostMeltRequest,
+                                  PostMeltResponse, PostMintQuoteRequest,
+                                  PostMintQuoteResponse, PostMintRequest,
+                                  PostMintResponse, PostRestoreResponse,
+                                  PostSplitRequest, PostSplitResponse, Proof,
+                                  ProofState, SpentState, Unit)
+from .lib.cashu.core.crypto.keys import (derive_keyset_id,
+                                         derive_keyset_id_deprecated,
+                                         derive_pubkey, random_hash)
 from .lib.cashu.core.db import lock_table
+from .lib.cashu.core.errors import CashuError, LightningError, NotAllowedError
+from .lib.cashu.core.helpers import sum_proofs
+from .lib.cashu.core.settings import settings
+from .lib.cashu.lightning.base import (InvoiceResponse, LightningBackend,
+                                       PaymentQuoteResponse, PaymentStatus)
 from .models import Cashu
 
 # --------- extension imports
@@ -401,7 +361,14 @@ async def mint(
 
     outputs = payload.outputs
     quote_id = payload.quote
-    promises = await lnbits_mint(ledger, outputs, quote_id, cashu)
+    try:
+        promises = await lnbits_mint(ledger, outputs, quote_id, cashu)
+    except Exception as e:
+        logger.info(f"Error while minting tokens: {e}")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Error while minting tokens: {e}",
+        )
     blinded_signatures = PostMintResponse(signatures=promises)
     logger.trace(f"< POST /v1/mint/bolt11: {blinded_signatures}")
     return blinded_signatures

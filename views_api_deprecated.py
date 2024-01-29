@@ -5,13 +5,10 @@ from typing import Dict, List, Union
 
 from fastapi import Depends, Query
 from lnbits import bolt11
-from lnbits.core.crud import get_standalone_payment, get_installed_extension, get_user
-from lnbits.core.services import (
-    check_transaction_status,
-    create_invoice,
-    fee_reserve,
-    pay_invoice,
-)
+from lnbits.core.crud import (get_installed_extension, get_standalone_payment,
+                              get_user)
+from lnbits.core.services import (check_transaction_status, create_invoice,
+                                  fee_reserve, pay_invoice)
 from lnbits.decorators import WalletTypeInfo, get_key_type, require_admin_key
 from lnbits.helpers import urlsafe_short_hash
 from lnbits.wallets.base import PaymentStatus
@@ -20,9 +17,9 @@ from starlette.exceptions import HTTPException
 
 from . import cashu_ext, ledger
 from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
+from .lib.cashu.core.errors import CashuError, LightningError, NotAllowedError
 from .lib.cashu.core.helpers import sum_proofs
 from .lib.cashu.core.settings import settings
-from .lib.cashu.core.errors import CashuError, NotAllowedError, LightningError
 
 # try to import service_fee from lnbits.core.services but fallback to 0.5% if it doesn't exist
 service_fee_present = True
@@ -45,38 +42,31 @@ def fee_reserve_internal(amount_msat: int) -> int:
         return fee_reserve_sat + math.ceil(amount_msat * 0.005 / 1000)
 
 
+from .ledger import (lnbits_get_melt_quote, lnbits_melt, lnbits_melt_quote,
+                     lnbits_mint, lnbits_mint_quote)
 # -------- cashu imports
-from .lib.cashu.core.base import (
-    BlindedSignature,
-    CheckFeesRequest_deprecated,
-    CheckFeesResponse_deprecated,
-    CheckSpendableRequest_deprecated,
-    CheckSpendableResponse_deprecated,
-    GetInfoResponse_deprecated,
-    GetMintResponse_deprecated,
-    KeysetsResponse_deprecated,
-    KeysResponse_deprecated,
-    PostMeltQuoteRequest,
-    PostMeltRequest_deprecated,
-    PostMeltResponse_deprecated,
-    PostMintQuoteRequest,
-    PostMintRequest_deprecated,
-    PostMintResponse_deprecated,
-    PostRestoreResponse,
-    PostSplitRequest_Deprecated,
-    PostSplitResponse_Deprecated,
-    PostSplitResponse_Very_Deprecated,
-    SpentState,
-)
+from .lib.cashu.core.base import (BlindedSignature,
+                                  CheckFeesRequest_deprecated,
+                                  CheckFeesResponse_deprecated,
+                                  CheckSpendableRequest_deprecated,
+                                  CheckSpendableResponse_deprecated,
+                                  GetInfoResponse_deprecated,
+                                  GetMintResponse_deprecated,
+                                  KeysetsResponse_deprecated,
+                                  KeysResponse_deprecated,
+                                  PostMeltQuoteRequest,
+                                  PostMeltRequest_deprecated,
+                                  PostMeltResponse_deprecated,
+                                  PostMintQuoteRequest,
+                                  PostMintRequest_deprecated,
+                                  PostMintResponse_deprecated,
+                                  PostRestoreResponse,
+                                  PostSplitRequest_Deprecated,
+                                  PostSplitResponse_Deprecated,
+                                  PostSplitResponse_Very_Deprecated,
+                                  SpentState)
 from .lib.cashu.core.db import lock_table
 from .models import Cashu
-from .ledger import (
-    lnbits_mint_quote,
-    lnbits_mint,
-    lnbits_melt_quote,
-    lnbits_melt,
-    lnbits_get_melt_quote,
-)
 
 # --------- extension imports
 
@@ -277,8 +267,7 @@ async def mint_deprecated(
     # Mint expects "id" in outputs to know which keyset to use to sign them.
     for output in payload.outputs:
         if not output.id:
-            # use the deprecated version of the current keyset
-            output.id = ledger.keyset.duplicate_keyset_id
+            output.id = cashu.keyset_id
     # END BACKWARDS COMPATIBILITY < 0.15
 
     # BEGIN: backwards compatibility < 0.12 where we used to lookup payments with payment_hash
@@ -286,10 +275,16 @@ async def mint_deprecated(
     hash = payment_hash or hash
     assert hash, "hash must be set."
     # END: backwards compatibility < 0.12
-
-    promises = await lnbits_mint(
-        ledger, outputs=payload.outputs, quote_id=hash, cashu=cashu
-    )
+    try:
+        promises = await lnbits_mint(
+            ledger, outputs=payload.outputs, quote_id=hash, cashu=cashu
+        )
+    except Exception as e:
+        logger.info(f"Error while minting tokens: {e}")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Error while minting tokens: {e}",
+        )
     blinded_signatures = PostMintResponse_deprecated(promises=promises)
 
     logger.trace(f"< POST /mint: {blinded_signatures}")

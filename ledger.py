@@ -1,72 +1,41 @@
-import stat
-from .lib.cashu.core.helpers import sum_proofs
-from .lib.cashu.core.errors import CashuError, NotAllowedError, LightningError
-from .lib.cashu.core.settings import settings
-import time
-import math
 import asyncio
-from loguru import logger
-from lnbits import bolt11
+import math
+import stat
+import time
 from typing import List, Optional, Tuple
-from lnbits.core.crud import get_standalone_payment
 
+from lnbits import bolt11
+from lnbits.core.crud import get_standalone_payment
+from lnbits.core.services import (check_transaction_status, create_invoice,
+                                  fee_reserve, pay_invoice)
+from loguru import logger
+
+from .lib.cashu.core.base import (DLEQ, Amount, BlindedMessage,
+                                  BlindedSignature, GetInfoResponse,
+                                  KeysetsResponse, KeysetsResponseKeyset,
+                                  KeysResponse, KeysResponseKeyset, MeltQuote,
+                                  Method, MintKeyset, MintQuote,
+                                  PostCheckStateRequest,
+                                  PostCheckStateResponse, PostMeltQuoteRequest,
+                                  PostMeltQuoteResponse, PostMeltRequest,
+                                  PostMeltResponse, PostMintQuoteRequest,
+                                  PostMintQuoteResponse, PostMintRequest,
+                                  PostMintResponse, PostRestoreResponse,
+                                  PostSplitRequest, PostSplitResponse, Proof,
+                                  ProofState, SpentState, Unit)
+from .lib.cashu.core.crypto.keys import (derive_keyset_id,
+                                         derive_keyset_id_deprecated,
+                                         derive_pubkey, random_hash)
+from .lib.cashu.core.errors import (CashuError, LightningError,
+                                    NotAllowedError, QuoteNotPaidError)
+from .lib.cashu.core.helpers import sum_proofs
+from .lib.cashu.core.settings import settings
+from .lib.cashu.lightning.base import (InvoiceResponse, LightningBackend,
+                                       PaymentQuoteResponse, PaymentResponse,
+                                       PaymentStatus)
 # -------- cashu imports
 from .lib.cashu.mint.ledger import Ledger
-from .lib.cashu.core.base import (
-    GetInfoResponse,
-    KeysetsResponse,
-    KeysetsResponseKeyset,
-    KeysResponse,
-    KeysResponseKeyset,
-    PostCheckStateRequest,
-    PostCheckStateResponse,
-    PostMeltQuoteRequest,
-    PostMeltQuoteResponse,
-    PostMeltRequest,
-    PostMeltResponse,
-    PostMintQuoteRequest,
-    PostMintQuoteResponse,
-    PostMintRequest,
-    PostMintResponse,
-    PostRestoreResponse,
-    PostSplitRequest,
-    PostSplitResponse,
-    DLEQ,
-    Amount,
-    BlindedMessage,
-    BlindedSignature,
-    MeltQuote,
-    Method,
-    MintKeyset,
-    MintQuote,
-    PostMeltQuoteRequest,
-    PostMeltQuoteResponse,
-    PostMintQuoteRequest,
-    Proof,
-    ProofState,
-    SpentState,
-    Unit,
-)
-from .lib.cashu.lightning.base import (
-    InvoiceResponse,
-    LightningBackend,
-    PaymentQuoteResponse,
-    PaymentStatus,
-    PaymentResponse,
-)
-from .lib.cashu.core.crypto.keys import (
-    derive_keyset_id,
-    derive_keyset_id_deprecated,
-    derive_pubkey,
-    random_hash,
-)
 from .models import Cashu
-from lnbits.core.services import (
-    check_transaction_status,
-    create_invoice,
-    fee_reserve,
-    pay_invoice,
-)
 
 # try to import service_fee from lnbits.core.services but fallback to 0.5% if it doesn't exist
 service_fee_present = True
@@ -185,7 +154,7 @@ async def lnbits_mint(
     )  # create a new lock if it doesn't exist
     async with ledger.locks[quote_id]:
         quote = await lnbits_get_mint_quote(ledger, quote_id, cashu)
-        assert quote.paid, "quote not paid"
+        assert quote.paid, QuoteNotPaidError()
         assert not quote.issued, "quote already issued"
         assert (
             quote.amount == sum_amount_outputs

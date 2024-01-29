@@ -2,14 +2,13 @@ import asyncio
 
 from environs import Env
 from fastapi import APIRouter
-
 from lnbits.db import Database
 from lnbits.helpers import template_renderer
 from lnbits.tasks import catch_everything_and_restart
 
 from .lib.cashu.core.base import Method, Unit
-from .lib.cashu.mint.crud import LedgerCrudSqlite
 from .lib.cashu.core.settings import settings
+from .lib.cashu.mint.crud import LedgerCrudSqlite
 
 db = Database("ext_cashu")
 
