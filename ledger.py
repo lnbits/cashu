@@ -6,33 +6,68 @@ from typing import List, Optional, Tuple
 
 from lnbits import bolt11
 from lnbits.core.crud import get_standalone_payment
-from lnbits.core.services import (check_transaction_status, create_invoice,
-                                  fee_reserve, pay_invoice)
+from lnbits.core.services import (
+    check_transaction_status,
+    create_invoice,
+    fee_reserve,
+    pay_invoice,
+)
 from loguru import logger
 
-from .lib.cashu.core.base import (DLEQ, Amount, BlindedMessage,
-                                  BlindedSignature, GetInfoResponse,
-                                  KeysetsResponse, KeysetsResponseKeyset,
-                                  KeysResponse, KeysResponseKeyset, MeltQuote,
-                                  Method, MintKeyset, MintQuote,
-                                  PostCheckStateRequest,
-                                  PostCheckStateResponse, PostMeltQuoteRequest,
-                                  PostMeltQuoteResponse, PostMeltRequest,
-                                  PostMeltResponse, PostMintQuoteRequest,
-                                  PostMintQuoteResponse, PostMintRequest,
-                                  PostMintResponse, PostRestoreResponse,
-                                  PostSplitRequest, PostSplitResponse, Proof,
-                                  ProofState, SpentState, Unit)
-from .lib.cashu.core.crypto.keys import (derive_keyset_id,
-                                         derive_keyset_id_deprecated,
-                                         derive_pubkey, random_hash)
-from .lib.cashu.core.errors import (CashuError, LightningError,
-                                    NotAllowedError, QuoteNotPaidError)
+from .lib.cashu.core.base import (
+    DLEQ,
+    Amount,
+    BlindedMessage,
+    BlindedSignature,
+    GetInfoResponse,
+    KeysetsResponse,
+    KeysetsResponseKeyset,
+    KeysResponse,
+    KeysResponseKeyset,
+    MeltQuote,
+    Method,
+    MintKeyset,
+    MintQuote,
+    PostCheckStateRequest,
+    PostCheckStateResponse,
+    PostMeltQuoteRequest,
+    PostMeltQuoteResponse,
+    PostMeltRequest,
+    PostMeltResponse,
+    PostMintQuoteRequest,
+    PostMintQuoteResponse,
+    PostMintRequest,
+    PostMintResponse,
+    PostRestoreResponse,
+    PostSplitRequest,
+    PostSplitResponse,
+    Proof,
+    ProofState,
+    SpentState,
+    Unit,
+)
+from .lib.cashu.core.crypto.keys import (
+    derive_keyset_id,
+    derive_keyset_id_deprecated,
+    derive_pubkey,
+    random_hash,
+)
+from .lib.cashu.core.errors import (
+    CashuError,
+    LightningError,
+    NotAllowedError,
+    QuoteNotPaidError,
+)
 from .lib.cashu.core.helpers import sum_proofs
 from .lib.cashu.core.settings import settings
-from .lib.cashu.lightning.base import (InvoiceResponse, LightningBackend,
-                                       PaymentQuoteResponse, PaymentResponse,
-                                       PaymentStatus)
+from .lib.cashu.lightning.base import (
+    InvoiceResponse,
+    LightningBackend,
+    PaymentQuoteResponse,
+    PaymentResponse,
+    PaymentStatus,
+)
+
 # -------- cashu imports
 from .lib.cashu.mint.ledger import Ledger
 from .models import Cashu
@@ -286,9 +321,6 @@ async def lnbits_get_melt_quote(self, quote_id: str, cashu: Cashu) -> MeltQuote:
             "Lightning: checking outgoing Lightning payment"
             f" {melt_quote.checking_id}"
         )
-        # status: PaymentStatus = await self.backends[method][unit].get_payment_status(
-        #     melt_quote.checking_id
-        # )
         # get the actual paid fees from the db entry
         payment = await get_standalone_payment(melt_quote.checking_id)
         assert payment, Exception("Payment not found.")

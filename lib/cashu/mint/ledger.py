@@ -393,8 +393,7 @@ class Ledger(LedgerVerification, LedgerSpendingConditions):
         )  # create a new lock if it doesn't exist
         async with self.locks[quote_id]:
             quote = await self.get_mint_quote(quote_id=quote_id)
-            if not quote.paid:
-                raise QuoteNotPaidError()
+            assert quote.paid, QuoteNotPaidError()
             assert not quote.issued, "quote already issued"
             assert (
                 quote.amount == sum_amount_outputs
