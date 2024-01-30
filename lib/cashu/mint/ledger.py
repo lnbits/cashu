@@ -83,7 +83,12 @@ class Ledger(LedgerVerification, LedgerSpendingConditions):
     # ------- KEYS -------
 
     async def activate_keyset(
-        self, *, derivation_path: str, seed: Optional[str] = None, autosave=True
+        self,
+        *,
+        derivation_path: str,
+        seed: Optional[str] = None,
+        version: Optional[str] = None,
+        autosave=True,
     ) -> MintKeyset:
         """Load the keyset for a derivation path if it already exists. If not generate new one and store in the db.
 
@@ -95,11 +100,12 @@ class Ledger(LedgerVerification, LedgerSpendingConditions):
             MintKeyset: Keyset
         """
         assert derivation_path, "derivation path not set"
+        seed = seed or self.master_key
         logger.debug(f"Activating keyset for derivation path {derivation_path}")
         # load the keyset from db
         logger.trace(f"crud: loading keyset for {derivation_path}")
         tmp_keyset_local: List[MintKeyset] = await self.crud.get_keyset(
-            derivation_path=derivation_path, db=self.db
+            derivation_path=derivation_path, seed=seed, db=self.db
         )
         logger.trace(f"crud: loaded {len(tmp_keyset_local)} keysets")
         if tmp_keyset_local:
@@ -111,7 +117,7 @@ class Ledger(LedgerVerification, LedgerSpendingConditions):
             keyset = MintKeyset(
                 seed=seed or self.master_key,
                 derivation_path=derivation_path,
-                version=settings.version,
+                version=version or settings.version,
             )
             logger.debug(f"Generated new keyset {keyset.id}.")
             if autosave:
