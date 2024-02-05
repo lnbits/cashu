@@ -7,10 +7,13 @@ from typing import Any, Dict, List, Union
 
 from fastapi import Depends, Query
 from lnbits import bolt11
-from lnbits.core.crud import (get_installed_extension, get_standalone_payment,
-                              get_user)
-from lnbits.core.services import (check_transaction_status, create_invoice,
-                                  fee_reserve, pay_invoice)
+from lnbits.core.crud import get_installed_extension, get_standalone_payment, get_user
+from lnbits.core.services import (
+    check_transaction_status,
+    create_invoice,
+    fee_reserve,
+    pay_invoice,
+)
 from lnbits.decorators import WalletTypeInfo, get_key_type, require_admin_key
 from lnbits.helpers import urlsafe_short_hash
 from lnbits.wallets.base import PaymentStatus
@@ -18,32 +21,64 @@ from loguru import logger
 from starlette.exceptions import HTTPException
 
 from . import cashu_ext, ledger
-from .crud import create_cashu, delete_cashu, get_cashu, get_cashus
-from .ledger import (lnbits_get_melt_quote, lnbits_melt, lnbits_melt_quote,
-                     lnbits_mint, lnbits_mint_quote)
+from .crud import create_cashu, delete_cashu, get_cashu, get_cashus, update_cashu
+from .ledger import (
+    lnbits_get_melt_quote,
+    lnbits_melt,
+    lnbits_melt_quote,
+    lnbits_mint,
+    lnbits_mint_quote,
+)
+
 # -------- cashu imports
-from .lib.cashu.core.base import (DLEQ, Amount, BlindedMessage,
-                                  BlindedSignature, GetInfoResponse,
-                                  KeysetsResponse, KeysetsResponseKeyset,
-                                  KeysResponse, KeysResponseKeyset, MeltQuote,
-                                  Method, MintKeyset, MintQuote,
-                                  PostCheckStateRequest,
-                                  PostCheckStateResponse, PostMeltQuoteRequest,
-                                  PostMeltQuoteResponse, PostMeltRequest,
-                                  PostMeltResponse, PostMintQuoteRequest,
-                                  PostMintQuoteResponse, PostMintRequest,
-                                  PostMintResponse, PostRestoreResponse,
-                                  PostSplitRequest, PostSplitResponse, Proof,
-                                  ProofState, SpentState, Unit)
-from .lib.cashu.core.crypto.keys import (derive_keyset_id,
-                                         derive_keyset_id_deprecated,
-                                         derive_pubkey, random_hash)
+from .lib.cashu.core.base import (
+    DLEQ,
+    Amount,
+    BlindedMessage,
+    BlindedSignature,
+    GetInfoResponse,
+    KeysetsResponse,
+    KeysetsResponseKeyset,
+    KeysResponse,
+    KeysResponseKeyset,
+    MeltQuote,
+    Method,
+    MintKeyset,
+    MintQuote,
+    PostCheckStateRequest,
+    PostCheckStateResponse,
+    PostMeltQuoteRequest,
+    PostMeltQuoteResponse,
+    PostMeltRequest,
+    PostMeltResponse,
+    PostMintQuoteRequest,
+    PostMintQuoteResponse,
+    PostMintRequest,
+    PostMintResponse,
+    PostRestoreResponse,
+    PostSplitRequest,
+    PostSplitResponse,
+    Proof,
+    ProofState,
+    SpentState,
+    Unit,
+)
+from .lib.cashu.core.crypto.keys import (
+    derive_keyset_id,
+    derive_keyset_id_deprecated,
+    derive_pubkey,
+    random_hash,
+)
 from .lib.cashu.core.db import lock_table
 from .lib.cashu.core.errors import CashuError, LightningError, NotAllowedError
 from .lib.cashu.core.helpers import sum_proofs
 from .lib.cashu.core.settings import settings
-from .lib.cashu.lightning.base import (InvoiceResponse, LightningBackend,
-                                       PaymentQuoteResponse, PaymentStatus)
+from .lib.cashu.lightning.base import (
+    InvoiceResponse,
+    LightningBackend,
+    PaymentQuoteResponse,
+    PaymentStatus,
+)
 from .models import Cashu
 
 # --------- extension imports
@@ -56,7 +91,8 @@ from .models import Cashu
 
 @cashu_ext.get("/api/v1/mints", status_code=HTTPStatus.OK)
 async def api_cashus(
-    all_wallets: bool = Query(False), wallet: WalletTypeInfo = Depends(get_key_type)
+    all_wallets: bool = Query(False),
+    wallet: WalletTypeInfo = Depends(require_admin_key),
 ):
     """
     Get all mints of this wallet.
@@ -66,18 +102,21 @@ async def api_cashus(
         user = await get_user(wallet.wallet.user)
         if user:
             wallet_ids = user.wallet_ids
-
-    return [cashu.dict() for cashu in await get_cashus(wallet_ids)]
+    cashus = await get_cashus(wallet_ids)
+    return [cashu.dict() for cashu in cashus]
 
 
 @cashu_ext.post("/api/v1/mints", status_code=HTTPStatus.CREATED)
 async def api_cashu_create(
     data: Cashu,
-    wallet: WalletTypeInfo = Depends(get_key_type),
+    wallet: WalletTypeInfo = Depends(require_admin_key),
 ):
     """
     Create a new mint for this wallet.
     """
+    if data.id:
+        cashu = await update_cashu(data.id, data)
+        return cashu.dict()
     cashu_id = urlsafe_short_hash()
 
     # generate a new keyset in cashu
@@ -297,7 +336,14 @@ async def mint_quote(
         )
 
     quote_request = payload
-    quote = await lnbits_mint_quote(ledger, quote_request, cashu)
+    try:
+        quote = await lnbits_mint_quote(ledger, quote_request, cashu)
+    except Exception as e:
+        logger.info(f"Error while getting mint quote: {e}")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Error while getting mint quote: {e}",
+        )
     resp = PostMintQuoteResponse(
         request=quote.request,
         quote=quote.quote,
@@ -323,7 +369,14 @@ async def get_mint_quote(cashu_id: str, quote: str) -> PostMintQuoteResponse:
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
     logger.trace(f"> GET /v1/mint/quote/bolt11/{quote}")
-    mint_quote = await ledger.get_mint_quote(quote)
+    try:
+        mint_quote = await ledger.get_mint_quote(quote)
+    except Exception as e:
+        logger.info(f"Error while getting mint quote: {e}")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Error while getting mint quote: {e}",
+        )
     resp = PostMintQuoteResponse(
         quote=mint_quote.quote,
         request=mint_quote.request,
@@ -393,7 +446,14 @@ async def get_melt_quote(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
     logger.trace(f"> POST /v1/melt/quote/bolt11: {payload}")
-    quote = await lnbits_melt_quote(ledger, payload, cashu)
+    try:
+        quote = await lnbits_melt_quote(ledger, payload, cashu)
+    except Exception as e:
+        logger.info(f"Error while getting melt quote: {e}")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Error while getting melt quote: {e}",
+        )
     logger.trace(f"< POST /v1/melt/quote/bolt11: {quote}")
     return quote
 
@@ -414,7 +474,14 @@ async def melt_quote(quote: str, cashu_id: str) -> PostMeltQuoteResponse:
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
     logger.trace(f"> GET /v1/melt/quote/bolt11/{quote}")
-    melt_quote = await lnbits_get_melt_quote(quote)
+    try:
+        melt_quote = await lnbits_get_melt_quote(quote)
+    except Exception as e:
+        logger.info(f"Error while getting melt quote: {e}")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Error while getting melt quote: {e}",
+        )
     resp = PostMeltQuoteResponse(
         quote=melt_quote.quote,
         amount=melt_quote.amount,

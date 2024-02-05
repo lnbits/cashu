@@ -110,6 +110,14 @@
                   flat
                   dense
                   size="xs"
+                  @click="editMint(props.row.id)"
+                  icon="edit"
+                  color="primary"
+                ></q-btn>
+                <q-btn
+                  flat
+                  dense
+                  size="xs"
                   @click="deleteMint(props.row.id)"
                   icon="cancel"
                   color="pink"
@@ -168,86 +176,28 @@
           :options="g.user.walletOptions"
           label="Cashu wallet *"
         ></q-select>
-        <!-- <q-toggle
-          v-model="toggleAdvanced"
-          label="Show advanced options"
-        ></q-toggle>
-        <div v-show="toggleAdvanced">
-          <div class="row">
-            <div class="col-5">
-              <q-checkbox
-                v-model="formDialog.data.fraction"
-                color="primary"
-                label="sats/coins?"
-              >
-                <q-tooltip
-                  >Use with hedging extension to create a stablecoin!</q-tooltip
-                >
-              </q-checkbox>
-            </div>
-            <div class="col-7">
-              <q-input
-                v-if="!formDialog.data.fraction"
-                filled
-                dense
-                type="number"
-                v-model.trim="formDialog.data.cost"
-                label="Sat coin cost (optional)"
-                value="1"
-                type="number"
-              ></q-input>
-              <q-input
-                v-if="!formDialog.data.fraction"
-                filled
-                dense
-                v-model.trim="formDialog.data.tickershort"
-                label="Ticker shorthand"
-                placeholder="sats"
-                #
-              ></q-input>
-            </div>
-          </div>
-          <q-input
-            class="q-mt-md"
-            filled
-            dense
-            type="number"
-            v-model.trim="formDialog.data.maxsats"
-            label="Maximum mint liquidity (optional)"
-            placeholder="∞"
-          ></q-input>
-          <q-input
-            class="q-mt-md"
-            filled
-            dense
-            type="number"
-            v-model.trim="formDialog.data.coins"
-            label="Coins that 'exist' in mint (optional)"
-            placeholder="∞"
-          ></q-input>
-        </div> -->
-        <!-- <q-expansion-item
+        <q-expansion-item
           group="advanced"
           icon="settings"
           label="Advanced options"
         >
           <q-card>
             <q-card-section>
-              <h5 class="text-caption q-mt-sm q-mb-none">Mint messages</h5>
+              <h5 class="text-caption q-mt-sm q-mb-none">Mint description</h5>
               <div class="row">
                 <div class="col-12">
                   <q-input
                     filled
                     dense
-                    v-model.number="formDialog.data.comment_chars"
-                    type="number"
-                    label="Comment maximum characters"
-                    hint="Allow the payer to attach a comment."
+                    v-model.number="formDialog.data.mint_description"
+                    type="text"
+                    label="Mint description"
+                    hint="Will be shown to users in Cashu wallets."
                   >
                   </q-input>
                 </div>
               </div>
-              <div class="row">
+              <!-- <div class="row">
                 <div class="col-12">
                   <q-input
                     filled
@@ -309,21 +259,22 @@
                   >
                   </q-input>
                 </div>
-              </div>
+              </div> -->
             </q-card-section>
-            <q-card-section>
-              <h5 class="text-caption q-mt-sm q-mb-none">Management</h5>
+            <q-card-section v-if="formDialog.data.id">
+            <h5 class="text-caption q-mt-sm q-mb-none">Management</h5>
             <div class="row q-col-gutter-sm">
               <div class="col">
                 <q-checkbox
                   dense
-                  v-model="formDialog.fixedAmount"
+                  v-model="formDialog.data.mint_peg_out_only"
                   label="Peg-out only"
+                  hint="Users can only peg-out from this mint."
                 />
               </div>
             </div>
           </q-card-section>
-            <q-card-section>
+            <!-- <q-card-section>
               <h5 class="text-caption q-mt-sm q-mb-none">Nostr</h5>
               <div class="row">
                 <div class="col-12">
@@ -335,9 +286,9 @@
                   />
                 </div>
               </div>
-            </q-card-section>
+            </q-card-section> -->
           </q-card>
-        </q-expansion-item> -->
+        </q-expansion-item>
         <div class="row q-mt-md">
           <q-btn
             unelevated
@@ -410,7 +361,16 @@
         },
         formDialog: {
           show: false,
-          data: {fraction: false}
+          data: {
+            name: null,
+            id: null,
+            mint_description: null,
+            mint_description_long: null,
+            mint_max_balance: null,
+            mint_max_peg_in: null,
+            mint_max_peg_out: null,
+            mint_peg_out_only: null,
+          }
         }
       }
     },
@@ -425,7 +385,7 @@
           .request(
             'GET',
             '/cashu/api/v1/mints?all_wallets=true',
-            this.g.user.wallets[0].inkey
+            this.g.user.wallets[0].adminkey
           )
           .then(function (response) {
             self.cashus = response.data.map(function (obj) {
@@ -434,12 +394,7 @@
           })
       },
       createMint: function () {
-        if (this.formDialog.data.maxliquid == null) {
-          this.formDialog.data.maxliquid = 0
-        }
-        var data = {
-          name: this.formDialog.data.name
-        }
+        var data = this.formDialog.data
         var self = this
 
         LNbits.api
@@ -447,11 +402,14 @@
             'POST',
             '/cashu/api/v1/mints',
             _.findWhere(this.g.user.wallets, {id: this.formDialog.data.wallet})
-              .inkey,
+              .adminkey,
             data
           )
           .then(function (response) {
-            self.cashus.push(mapMint(response.data))
+            // push the new mint to the list if response.data.id is not already in the list
+            if (!_.findWhere(self.cashus, {id: response.data.id})) {
+              self.cashus.push(mapMint(response.data))
+            }
             self.formDialog.show = false
           })
           .catch(function (error) {
@@ -483,6 +441,11 @@
                 LNbits.utils.notifyApiError(error)
               })
           })
+      },
+      editMint: function (cashuId) {
+        var cashu = _.findWhere(this.cashus, {id: cashuId})
+        this.formDialog.data = cashu
+        this.formDialog.show = true
       },
       exportCSV: function () {
         LNbits.utils.exportCSV(this.cashusTable.columns, this.cashus)
