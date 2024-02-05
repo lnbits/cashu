@@ -155,29 +155,6 @@ async def api_cashu_delete(
     raise HTTPException(status_code=HTTPStatus.NO_CONTENT)
 
 
-@cashu_ext.put("/api/v1/mints/{cashu_id}")
-async def api_cashu_update(
-    cashu_id: str, data: Cashu, wallet: WalletTypeInfo = Depends(require_admin_key)
-):
-    """
-    Update an existing cashu mint.
-    """
-    cashu = await get_cashu(cashu_id)
-
-    if not cashu:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail="Cashu mint does not exist."
-        )
-
-    if cashu.wallet != wallet.wallet.id:
-        raise HTTPException(
-            status_code=HTTPStatus.FORBIDDEN, detail="Not your Cashu mint."
-        )
-
-    await update_cashu(cashu_id, data)
-    return await get_cashu(cashu_id)
-
-
 #######################################
 ########### CASHU ENDPOINTS ###########
 #######################################
