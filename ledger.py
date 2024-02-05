@@ -96,7 +96,8 @@ def fee_reserve_internal(amount_msat: int) -> int:
 async def lnbits_mint_quote(
     ledger: Ledger, quote_request: PostMintQuoteRequest, cashu: Cashu
 ) -> MintQuote:
-    # from ledger.py:ledger.mint_quote
+    if cashu.mint_peg_out_only:
+        raise NotAllowedError("Mint does not allow minting new tokens.")
     assert quote_request.amount > 0, "amount must be positive"
     if settings.mint_max_peg_in and quote_request.amount > settings.mint_max_peg_in:
         raise NotAllowedError(f"Maximum mint amount is {settings.mint_max_peg_in} sat.")
@@ -179,6 +180,8 @@ async def lnbits_mint(
     ledger: Ledger, outputs: List[BlindedSignature], quote_id: str, cashu: Cashu
 ) -> List[BlindedSignature]:
     logger.trace("called mint")
+    if cashu.mint_peg_out_only:
+        raise NotAllowedError("Mint does not allow minting new tokens.")
     keyset = ledger.keysets[cashu.keyset_id]
 
     await ledger._verify_outputs(outputs)

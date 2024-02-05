@@ -234,9 +234,16 @@ async def request_mint_deprecated(
         raise CashuError(code=0, detail="Amount must be a valid amount of sat.")
     if settings.mint_peg_out_only:
         raise CashuError(code=0, detail="Mint does not allow minting new tokens.")
-    quote = await lnbits_mint_quote(
-        ledger, PostMintQuoteRequest(amount=amount, unit="sat"), cashu
-    )
+    try:
+        quote = await lnbits_mint_quote(
+            ledger, PostMintQuoteRequest(amount=amount, unit="sat"), cashu
+        )
+    except Exception as e:
+        logger.info(f"Error while requesting mint: {e}")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Error while requesting mint: {e}",
+        )
     resp = GetMintResponse_deprecated(pr=quote.request, hash=quote.quote)
     logger.trace(f"< GET /mint: {resp}")
     return resp
@@ -350,18 +357,25 @@ async def melt_deprecated(
             if not output.id:
                 output.id = cashu.keyset_id
     # END BACKWARDS COMPATIBILITY < 0.14
-    quote = await lnbits_melt_quote(
-        ledger,
-        PostMeltQuoteRequest(request=payload.pr, unit="sat"),
-        cashu,
-    )
-    preimage, change_promises = await lnbits_melt(
-        ledger,
-        proofs=payload.proofs,
-        quote=quote.quote,
-        outputs=payload.outputs,
-        cashu=cashu,
-    )
+    try:
+        quote = await lnbits_melt_quote(
+            ledger,
+            PostMeltQuoteRequest(request=payload.pr, unit="sat"),
+            cashu,
+        )
+        preimage, change_promises = await lnbits_melt(
+            ledger,
+            proofs=payload.proofs,
+            quote=quote.quote,
+            outputs=payload.outputs,
+            cashu=cashu,
+        )
+    except Exception as e:
+        logger.info(f"Error while melting tokens: {e}")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Error while melting tokens: {e}",
+        )
     resp = PostMeltResponse_deprecated(
         paid=True, preimage=preimage, change=change_promises
     )
@@ -390,9 +404,16 @@ async def check_fees(
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND, detail="Mint does not exist."
         )
-    quote = await lnbits_melt_quote(
-        ledger, PostMeltQuoteRequest(request=payload.pr, unit="sat"), cashu
-    )
+    try:
+        quote = await lnbits_melt_quote(
+            ledger, PostMeltQuoteRequest(request=payload.pr, unit="sat"), cashu
+        )
+    except Exception as e:
+        logger.info(f"Error while checking fees: {e}")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Error while checking fees: {e}",
+        )
     fees_sat = quote.fee_reserve
     logger.trace(f"< POST /checkfees: {fees_sat}")
     return CheckFeesResponse_deprecated(fee=fees_sat)
