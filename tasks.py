@@ -11,7 +11,7 @@ from .lib.cashu.mint import migrations
 async def startup_cashu_mint():
     await migrate_databases(db, migrations)
     await ledger.load_used_proofs()
-    await ledger.init_keysets(autosave=False)
+    await ledger.init_keysets(autosave=False, duplicate_keysets=False)
 
 
 async def wait_for_paid_invoices():
