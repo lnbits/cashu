@@ -158,6 +158,8 @@ async def api_cashu_delete(
 #######################################
 ########### CASHU ENDPOINTS ###########
 #######################################
+
+
 @cashu_ext.get(
     "/api/v1/{cashu_id}/v1/info",
     name="Mint information",
@@ -188,6 +190,7 @@ async def info(cashu_id: str):
     mint_features: Dict[int, Dict[str, Any]] = {
         4: dict(
             methods=method_unit_pairs,
+            disabled=cashu.mint_peg_out_only or False,
         ),
         5: dict(
             methods=method_unit_pairs,
@@ -204,6 +207,8 @@ async def info(cashu_id: str):
     return GetInfoResponse(
         name=cashu.name,
         version=f"LNbitsCashu/{installed_version}",
+        description=cashu.mint_description,
+        description_long=cashu.mint_description_long,
         nuts=mint_features,
     )
 
