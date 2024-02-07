@@ -334,7 +334,7 @@ async def lnbits_get_melt_quote(self, quote_id: str, cashu: Cashu) -> MeltQuote:
         paid_fee_msat = payment.fee
         status = PaymentStatus(
             paid=not payment.pending,
-            fee=Amount(unit=Unit.sat, amount=math.ceil(paid_fee_msat / 1000)),
+            fee=Amount(unit=Unit.sat, amount=math.ceil(abs(paid_fee_msat) / 1000)),
             preimage=payment.preimage,
         )
 
@@ -429,7 +429,9 @@ async def lnbits_melt(
             payment = PaymentResponse(
                 ok=status.paid,
                 checking_id=checking_id,
-                fee=Amount(unit=Unit.sat, amount=math.ceil(status.fee_msat / 1000)),
+                fee=Amount(
+                    unit=Unit.sat, amount=math.ceil(abs(status.fee_msat) / 1000)
+                ),
                 preimage=status.preimage,
             )
             logger.debug(
