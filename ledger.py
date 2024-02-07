@@ -326,7 +326,11 @@ async def lnbits_get_melt_quote(self, quote_id: str, cashu: Cashu) -> MeltQuote:
         )
         # get the actual paid fees from the db entry
         payment = await get_standalone_payment(melt_quote.checking_id)
-        assert payment, Exception("Payment not found.")
+
+        # payment not found, return the quote as is
+        if not payment:
+            return melt_quote
+
         paid_fee_msat = payment.fee
         status = PaymentStatus(
             paid=not payment.pending,
