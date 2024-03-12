@@ -408,7 +408,6 @@ class PostMeltQuoteRequest(BaseModel):
     request: str = Field(
         ..., max_length=settings.mint_max_request_length
     )  # output payment request
-    amount: Optional[int] = Field(default=None, gt=0)  # input amount
 
 
 class PostMeltQuoteResponse(BaseModel):
@@ -487,7 +486,7 @@ class PostSplitResponse_Very_Deprecated(BaseModel):
 
 
 class PostCheckStateRequest(BaseModel):
-    secrets: List[str] = Field(..., max_items=settings.mint_max_request_length)
+    Ys: List[str] = Field(..., max_items=settings.mint_max_request_length)
 
 
 class SpentState(Enum):
@@ -500,7 +499,7 @@ class SpentState(Enum):
 
 
 class ProofState(BaseModel):
-    secret: str
+    Y: str
     state: SpentState
     witness: Optional[str] = None
 
@@ -531,7 +530,13 @@ class CheckFeesResponse_deprecated(BaseModel):
 
 class PostRestoreResponse(BaseModel):
     outputs: List[BlindedMessage] = []
-    promises: List[BlindedSignature] = []
+    signatures: List[BlindedSignature] = []
+    promises: Optional[List[BlindedSignature]] = []  # deprecated since 0.15.1
+
+    # duplicate value of "signatures" for backwards compatibility with old clients < 0.15.1
+    def __init__(self, **data):
+        super().__init__(**data)
+        self.promises = self.signatures
 
 
 # ------- KEYSETS -------
