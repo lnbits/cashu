@@ -1,12 +1,5 @@
-# LNbits Cashu extension - <small>[LNbits](https://github.com/lnbits/lnbits) extension</small>
-<small>For more about LNBits extension check [this tutorial](https://github.com/lnbits/lnbits/wiki/LNbits-Extensions)</small>
+# Deprecation warning
 
-This extensions is a Cashu mint and a Cashu wallet. 
+This extension repo is no longer maintained and there are several known bugs in this version that can break your current mint if you update.
 
-### Usage
-
-1. Enable Cashu extension
-2. Create a Mint
-3. Share wallet
-
-
+From now on, the Cashu extension will developed here: https://github.com/cashubtc/lnbits-cashu/
